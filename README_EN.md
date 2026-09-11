@@ -79,6 +79,84 @@ curl -s -X POST http://127.0.0.1:3080/mgw/pair -H 'content-type: application/jso
 
 From the emulator the host is always at `10.0.2.2` (QEMU slirp) — **do not use `127.0.0.1`**.
 
+## Access outside the LAN (public / remote)
+
+Using the client outside the local network **requires no client changes**: the pairing payload's
+`publicUrl` only has to be a reachable `wss://` URL (`protocol/PairingPayload.ets` validates the
+scheme and authority only). Generate the QR code in the WebUI, pair with the client, and the token is
+persisted per endpoint — a stable address means no re-pairing.
+
+The recommended option is a **named Cloudflare Tunnel**: if your domain is hosted on Cloudflare it
+gives you a stable `wss://<subdomain>/ws/mobile` with no VPN client on the phone and no public IP or
+router port-forwarding.
+
+### 1. Install and log in to cloudflared (on the machine running `dsh web`)
+
+```bash
+brew install cloudflared
+cloudflared tunnel login        # pick the zone that owns your domain in the browser
+```
+
+### 2. Create the tunnel
+
+```bash
+cloudflared tunnel create dsh-mobile     # note the <TUNNEL-UUID> it prints
+```
+
+### 3. Write `~/.cloudflared/config.yml`
+
+```yaml
+tunnel: <TUNNEL-UUID>
+credentials-file: /Users/<your-user>/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: dsh.example.com          # replace with your own subdomain
+    service: http://127.0.0.1:3081     # the plugin's LAN listener; WebSocket upgrades automatically
+  - service: http_status:404
+```
+
+### 4. Route DNS and verify in the foreground
+
+```bash
+cloudflared tunnel route dns dsh-mobile dsh.example.com
+cloudflared tunnel run dsh-mobile
+```
+
+### 5. Install as a service (prefer no sudo so it reads `~/.cloudflared/`)
+
+```bash
+cloudflared service install
+```
+
+> Known pitfall: with some versions the launch agent created by `cloudflared service install` only
+> runs the bare binary without the `tunnel run` subcommand and exits immediately. If
+> `launchctl list | grep cloudflare` shows no running process and the log keeps repeating
+> `use 'cloudflared tunnel run'`, edit `ProgramArguments` in
+> `~/Library/LaunchAgents/com.cloudflare.cloudflared.plist` to pass
+> `tunnel --config <config path> --no-autoupdate run` explicitly, then reload with
+> `launchctl bootout` + `launchctl bootstrap`.
+
+### 6. WebUI and phone pairing
+
+- Keep "Allow mobile devices" and **Device authentication** enabled.
+- Set "WebSocket address" to `wss://dsh.example.com/ws/mobile`, then generate the pairing QR code.
+- Pair with the phone using this client; a stable address stays valid long-term.
+- The "Public access / system Helper" block targets a **Linux server with a fixed public IPv4**
+  (Nginx + Certbot); with a home macOS/Windows tunnel you do **not** run its `init`.
+
+### Notes
+
+- **Do not put Cloudflare Access in front of this hostname**: a WebSocket client cannot complete an
+  interactive login and would be blocked. Security comes from the gateway's **device authentication**;
+  add a WAF rate limit if you want more.
+- Cloudflare dashboard: keep Network → WebSockets on; set the SSL/TLS mode to Full.
+- Large frames: Cloudflare passes proxied WebSocket traffic through, so the 1 MiB Workers limit does
+  not apply; still send an image once to confirm (the client frame budget is 3.5 MB).
+- Always-on prerequisites: the machine must stay awake and `dsh web` must keep running; if
+  `dsh web` stops, the tunnel returns 502.
+- The gateway README also documents Tailscale Serve and Cloudflare Quick Tunnel; note that HarmonyOS
+  NEXT has no official Tailscale client, so the named tunnel above is the long-term recommendation.
+
 ## Protocol probe
 
 `tools/probe.mjs` is a Node reference client (it runs the same requests as the ArkTS client and

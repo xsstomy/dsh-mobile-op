@@ -73,6 +73,78 @@ curl -s -X POST http://127.0.0.1:3080/mgw/pair -H 'content-type: application/jso
 
 模拟器访问宿主固定用 `10.0.2.2`（QEMU slirp），**不要用 `127.0.0.1`**。
 
+## 非局域网访问（公网 / 远程）
+
+同一局域网之外使用**不需要改客户端**：配对载荷里的 `publicUrl` 只要是一个可达的 `wss://` 地址即可
+（`protocol/PairingPayload.ets` 只校验 scheme 与 authority）。在 WebUI 生成二维码后用客户端扫码配对，
+token 按 endpoint 持久化，地址稳定就不用重复配对。
+
+推荐 **Cloudflare 命名隧道**：域名已托管在 Cloudflare 时，它能给出长期稳定的
+`wss://<子域名>/ws/mobile`，手机端无需安装任何 VPN 客户端，也不需要公网 IP 或路由器端口转发。
+
+### 1. 安装并登录 cloudflared（在运行 `dsh web` 的电脑上）
+
+```bash
+brew install cloudflared
+cloudflared tunnel login        # 浏览器里选中域名所在的 zone
+```
+
+### 2. 创建隧道
+
+```bash
+cloudflared tunnel create dsh-mobile     # 记下输出的 <TUNNEL-UUID>
+```
+
+### 3. 写 `~/.cloudflared/config.yml`
+
+```yaml
+tunnel: <TUNNEL-UUID>
+credentials-file: /Users/<你的用户名>/.cloudflared/<TUNNEL-UUID>.json
+
+ingress:
+  - hostname: dsh.example.com          # 替换成你自己的子域名
+    service: http://127.0.0.1:3081     # 指向插件局域网监听；WebSocket 会自动升级
+  - service: http_status:404
+```
+
+### 4. 绑定 DNS 并前台验证
+
+```bash
+cloudflared tunnel route dns dsh-mobile dsh.example.com
+cloudflared tunnel run dsh-mobile
+```
+
+### 5. 装成常驻服务（建议不加 sudo，这样它读 `~/.cloudflared/`）
+
+```bash
+cloudflared service install
+```
+
+> 已知坑：某些版本的 `cloudflared service install` 生成的 launch agent 只写了裸二进制、缺少
+> `tunnel run` 子命令，启动即退出。若 `launchctl list | grep cloudflare` 看不到运行中的进程、
+> 日志里反复出现 `use 'cloudflared tunnel run'`，就把
+> `~/Library/LaunchAgents/com.cloudflare.cloudflared.plist` 的 `ProgramArguments` 改成显式带
+> `tunnel --config <config 路径> --no-autoupdate run`，再 `launchctl bootout` + `launchctl bootstrap` 重载。
+
+### 6. WebUI 与手机配对
+
+- 保持「允许移动设备连接」与「**设备鉴权**」开启。
+- 「WebSocket 地址」填 `wss://dsh.example.com/ws/mobile`，再「生成配对二维码」。
+- 手机用本客户端扫码即可；地址稳定后长期有效。
+- 「公网接入 / 系统 Helper」那一块是给**固定公网 IP 的 Linux 服务器**（Nginx + Certbot）用的；
+  家用 macOS / Windows 走隧道时**不要**执行它的 `init`。
+
+### 注意事项
+
+- **不要在该子域名前启用 Cloudflare Access**：WebSocket 客户端无法完成交互式登录，会被直接挡死；
+  安全由网关的**设备鉴权**负责，需要时另加 WAF 限速。
+- Cloudflare 面板：Network → WebSockets 保持开启；SSL/TLS 模式设为 Full。
+- 大帧：Cloudflare 对代理型 WebSocket 是透传，Workers 的 1 MiB 限制不适用；仍建议首次发一张图实测
+  （客户端单帧预算 3.5 MB）。
+- 常驻前提：电脑保持不休眠、`dsh web` 持续运行；`dsh web` 停了隧道会返回 502。
+- 网关 README 还记录过 Tailscale Serve 与 Cloudflare Quick Tunnel；注意 HarmonyOS NEXT 目前没有官方
+  Tailscale 客户端，长期使用推荐本文的命名隧道。
+
 ## 协议对照探针
 
 `tools/probe.mjs` 是 Node 参考实现（与 ArkTS 客户端跑同一批请求，用于逐帧比对 `requestId` 关联与 `seq` 去重）：
