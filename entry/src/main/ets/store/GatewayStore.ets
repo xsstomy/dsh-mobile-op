@@ -155,6 +155,15 @@ const STATS_REFRESH_MIN_MS = 3000;
  */
 const CATCHUP_FRESH_MS = 2000;
 
+/**
+ * History pages are large — a 60-message page of a long live session measured
+ * ~1.3 MB — so the first paint asks for fewer messages and the rest streams in
+ * when the user scrolls up (`loadOlder`). 20 messages ≈ 0.5 MB ≈ 3x faster to
+ * open over the tunnel.
+ */
+const INITIAL_HISTORY_MESSAGES = 20;
+const HISTORY_PAGE_MESSAGES = 60;
+
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve: (value: void) => void) => {
     setTimeout(() => {
@@ -190,6 +199,8 @@ export class GatewayStore {
   private titles: Map<string, string> = new Map<string, string>();
   private history: WireSessionEvent[] = [];
   private conversation: ConversationItem[] = [];
+  /** True while the selected session's first history page is in flight. */
+  private conversationLoading: boolean = false;
   /** Session id + time of the last successful `history` load (see CATCHUP_FRESH_MS). */
   private historyLoadedSessionId: string = '';
   private historyLoadedAt: number = 0;
@@ -406,6 +417,7 @@ export class GatewayStore {
     snapshot.activeSessionTitle = this.titleOfSession(this.selectedSessionId);
     snapshot.queueCount = (this.queues.get(this.selectedSessionId) ?? []).length;
     snapshot.conversation = this.conversation;
+    snapshot.conversationLoading = this.conversationLoading;
     const questions: QuestionCardRow[] = [];
     this.questions.forEach((question: QuestionCardRow) => {
       questions.push(question);
@@ -738,15 +750,22 @@ export class GatewayStore {
     }
   }
 
-  async selectSession(sessionId: string): Promise<void> {
+  /**
+   * Synchronous half of opening a session: adopt the selection, clear the old
+   * transcript and mark the conversation as loading. Split out so the workspace
+   * can push the conversation page immediately and let the data arrive after the
+   * push (see `loadSessionData`) instead of blocking navigation on a large
+   * history page.
+   */
+  beginSession(sessionId: string): void {
     if (this.statsRefreshTimer >= 0) {
       clearTimeout(this.statsRefreshTimer);
       this.statsRefreshTimer = -1;
     }
     this.selectedSessionId = sessionId;
-    await this.preferences?.setLastSessionId(sessionId);
     this.history = [];
     this.conversation = [];
+    this.conversationLoading = true;
     // Opening a session adopts the host's truth for it (a turn may already be
     // running, e.g. after a restart); the start time is unknown at this point.
     this.turnActivity = turnIdle();
@@ -757,8 +776,40 @@ export class GatewayStore {
     this.todosSeq = -1;
     this.goal = null;
     this.stats = null;
-    await this.loadHistory(sessionId, undefined);
+  }
+
+  /**
+   * Asynchronous half of opening a session: fetch the initial history page,
+   * then the per-session panels. Safe to run detached (the workspace does); the
+   * panels are skipped if the user already switched to another session.
+   */
+  async loadSessionData(sessionId: string): Promise<void> {
+    try {
+      await this.loadHistory(sessionId, undefined);
+    } catch (failure) {
+      // Transport failures self-heal on reconnect and would just flash here;
+      // only genuine host refusals are worth a banner.
+      const error = failure as Error;
+      if (!isTransportUnavailable(error)) {
+        this.notice = error.message;
+        this.noticeIsError = true;
+      }
+    } finally {
+      if (this.selectedSessionId === sessionId) {
+        this.conversationLoading = false;
+        this.publish();
+      }
+    }
+    if (this.selectedSessionId !== sessionId) {
+      return;
+    }
     await this.refreshSessionPanels(sessionId);
+  }
+
+  async selectSession(sessionId: string): Promise<void> {
+    this.beginSession(sessionId);
+    await this.preferences?.setLastSessionId(sessionId);
+    await this.loadSessionData(sessionId);
   }
 
   /**
@@ -773,8 +824,13 @@ export class GatewayStore {
     if (sessionId.length === 0 || !this.client.isConnected) {
       return;
     }
-    // `selectSession` just subscribed and loaded this session; the `onPageShow`
-    // that fires right after the push would otherwise fetch the same page again.
+    // A fresh open may still be fetching its first page (`beginSession` +
+    // `loadSessionData`); a catch-up now would duplicate that in-flight request.
+    // Once it lands, the timestamp guard covers the `onPageShow` that fires
+    // immediately after the push.
+    if (this.conversationLoading) {
+      return;
+    }
     if (this.historyLoadedSessionId === sessionId && Date.now() - this.historyLoadedAt < CATCHUP_FRESH_MS) {
       return;
     }
@@ -1605,7 +1661,8 @@ export class GatewayStore {
   }
 
   async loadHistory(sessionId: string, beforeSeq?: number): Promise<void> {
-    const frame = await this.client.request('history', new HistoryPayload(sessionId, beforeSeq));
+    const maxMessages = beforeSeq === undefined ? INITIAL_HISTORY_MESSAGES : HISTORY_PAGE_MESSAGES;
+    const frame = await this.client.request('history', new HistoryPayload(sessionId, beforeSeq, maxMessages));
     const page = asSessionEvents(frame);
     const outcome = mergeHistoryPage(this.history, page);
     this.history = outcome.events;

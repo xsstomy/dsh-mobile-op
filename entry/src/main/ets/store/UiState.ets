@@ -143,6 +143,8 @@ export interface UiSnapshot {
   activeSessionId: string;
   activeSessionTitle: string;
   conversation: ConversationItem[];
+  /** True while the selected session's first history page is still loading. */
+  conversationLoading: boolean;
   queueCount: number;
   questions: QuestionCardRow[];
   approvals: ApprovalCardRow[];
@@ -212,6 +214,7 @@ export function emptyUiSnapshot(): UiSnapshot {
     activeSessionId: '',
     activeSessionTitle: '',
     conversation: [],
+    conversationLoading: false,
     queueCount: 0,
     questions: [],
     approvals: [],

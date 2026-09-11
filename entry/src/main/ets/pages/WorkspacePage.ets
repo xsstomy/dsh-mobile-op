@@ -138,9 +138,16 @@ struct WorkspacePage {
     }
     this.openingSessionId = sessionId;
     this.error = '';
+    // Adopt the selection synchronously, then navigate before the history page
+    // arrives: over a WAN tunnel that page can take seconds, and waiting for it
+    // made a tap feel unresponsive. The conversation shows its loading row and
+    // fills in as the data lands.
+    this.store.beginSession(sessionId);
     try {
-      await this.store.selectSession(sessionId);
       await router.pushUrl({ url: 'pages/ConversationPage' });
+      this.store.loadSessionData(sessionId).catch((failure: Error) => {
+        this.error = failure.message;
+      });
     } catch (failure) {
       this.error = (failure as Error).message;
       this.openingSessionId = '';

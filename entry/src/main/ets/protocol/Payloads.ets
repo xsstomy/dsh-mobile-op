@@ -42,9 +42,9 @@ export class HistoryPayload {
   view: string;
   beforeSeq?: number;
 
-  constructor(sessionId: string, beforeSeq?: number) {
+  constructor(sessionId: string, beforeSeq?: number, maxMessages: number = 60) {
     this.sessionId = sessionId;
-    this.maxMessages = 60;
+    this.maxMessages = maxMessages;
     this.maxBytes = 4 * 1024 * 1024;
     this.view = 'conversation';
     if (beforeSeq !== undefined) {

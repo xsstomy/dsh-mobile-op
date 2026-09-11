@@ -1564,16 +1564,31 @@ struct ConversationPage {
 
         Stack() {
           List({ space: 4, scroller: this.scroller }) {
-          ListItem() {
-            Text(this.loadingMore ? '加载中…' : '加载更早的历史')
-              .fontSize(AppFont.CAPTION)
-              .fontColor(AppColors.MIST)
+          if (this.ui.conversationLoading && this.ui.conversation.length === 0) {
+            ListItem() {
+              Row({ space: 8 }) {
+                LoadingProgress().width(18).height(18).color(AppColors.MIST)
+                Text('加载对话…')
+                  .fontSize(AppFont.CAPTION)
+                  .fontColor(AppColors.MIST)
+              }
               .width('100%')
-              .textAlign(TextAlign.Center)
-              .padding({ top: 6, bottom: 10 })
-              .onClick(() => {
-                this.loadOlder();
-              })
+              .justifyContent(FlexAlign.Center)
+              .padding({ top: 28, bottom: 28 })
+            }
+          }
+          if (!(this.ui.conversationLoading && this.ui.conversation.length === 0)) {
+            ListItem() {
+              Text(this.loadingMore ? '加载中…' : '加载更早的历史')
+                .fontSize(AppFont.CAPTION)
+                .fontColor(AppColors.MIST)
+                .width('100%')
+                .textAlign(TextAlign.Center)
+                .padding({ top: 6, bottom: 10 })
+                .onClick(() => {
+                  this.loadOlder();
+                })
+            }
           }
           ForEach(this.ui.conversation, (item: ConversationItem, index: number) => {
             ListItem() {
