@@ -793,17 +793,25 @@ export class GatewayStore {
     this.client.setForeground(false);
   }
 
-  /** tasks / goal / stats are per session: refresh them together. */
+  /**
+   * tasks / goal / stats / models / permissions / commands are per session and
+   * mutually independent; refresh them concurrently. Serially they cost six
+   * round trips — invisible on a LAN (~3 ms each) but roughly six times the
+   * link latency through a WAN tunnel. Each callee swallows its own failure, so
+   * `Promise.all` never rejects here.
+   */
   async refreshSessionPanels(sessionId: string): Promise<void> {
     if (sessionId.length === 0) {
       return;
     }
-    await this.refreshTasks(sessionId);
-    await this.refreshGoal(sessionId);
-    await this.refreshSessionStats(sessionId);
-    await this.refreshModels(sessionId);
-    await this.refreshPermissions(sessionId);
-    await this.refreshCommands(sessionId);
+    await Promise.all([
+      this.refreshTasks(sessionId),
+      this.refreshGoal(sessionId),
+      this.refreshSessionStats(sessionId),
+      this.refreshModels(sessionId),
+      this.refreshPermissions(sessionId),
+      this.refreshCommands(sessionId)
+    ]);
   }
 
   // ----------------------------------------------------------- settings (P2)

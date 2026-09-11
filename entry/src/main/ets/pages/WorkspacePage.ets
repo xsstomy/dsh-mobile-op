@@ -37,6 +37,14 @@ struct WorkspacePage {
   /** Bounded self-heal timer for a roster write that lost the socket race. */
   private retryTimer: number = -1;
   private retryLeft: number = 0;
+  /**
+   * Session id whose `selectSession` is currently in flight. Opening a session
+   * takes several round trips, so over a WAN tunnel it can take ~1 s — long
+   * enough that an impatient double/triple tap used to queue several selects
+   * and then push one ConversationPage per tap. The first tap latches; later
+   * taps are ignored until this page is shown again (see `onPageShow`).
+   */
+  private openingSessionId: string = '';
 
   async aboutToAppear(): Promise<void> {
     await this.reload();
@@ -48,6 +56,9 @@ struct WorkspacePage {
    * not run a second time and the list would keep a stale snapshot.
    */
   onPageShow(): void {
+    // Returning from a conversation (or a failed push) releases the open latch
+    // so the next tap can enter a session again.
+    this.openingSessionId = '';
     this.reload();
   }
 
@@ -112,6 +123,27 @@ struct WorkspacePage {
       this.error = (failure as Error).message;
     } finally {
       this.creating = false;
+    }
+  }
+
+  /**
+   * Open a session at most once per tap burst. `selectSession` is a chain of
+   * requests, so while it is in flight every additional tap is dropped instead
+   * of stacking another ConversationPage. The latch is released in
+   * `onPageShow` on return, and immediately if the open fails.
+   */
+  private async openSession(sessionId: string): Promise<void> {
+    if (this.openingSessionId.length > 0) {
+      return;
+    }
+    this.openingSessionId = sessionId;
+    this.error = '';
+    try {
+      await this.store.selectSession(sessionId);
+      await router.pushUrl({ url: 'pages/ConversationPage' });
+    } catch (failure) {
+      this.error = (failure as Error).message;
+      this.openingSessionId = '';
     }
   }
 
@@ -380,11 +412,7 @@ struct WorkspacePage {
     .alignItems(VerticalAlign.Top)
     .padding({ top: 12, bottom: 12 })
     .onClick(() => {
-      this.store.selectSession(session.sessionId).then(() => {
-        router.pushUrl({ url: 'pages/ConversationPage' });
-      }).catch((failure: Error) => {
-        this.error = failure.message;
-      });
+      this.openSession(session.sessionId);
     })
     .gesture(LongPressGesture().onAction(() => {
       this.store.archiveSession(session.sessionId).catch((failure: Error) => {
