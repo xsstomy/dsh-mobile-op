@@ -146,6 +146,15 @@ const CONNECT_RETRY_DELAYS: number[] = [0, 400, 1200, 2500];
  */
 const STATS_REFRESH_MIN_MS = 3000;
 
+/**
+ * The first `onPageShow` after `selectSession` must not repeat the history fetch
+ * the open just performed. A `history` page is ~1.3 MB on a long session, so
+ * re-downloading it immediately doubles the wait over a WAN tunnel and competes
+ * with the first render. Re-sync only once the open is older than this window
+ * (returning from Settings or the background still refreshes).
+ */
+const CATCHUP_FRESH_MS = 2000;
+
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve: (value: void) => void) => {
     setTimeout(() => {
@@ -181,6 +190,9 @@ export class GatewayStore {
   private titles: Map<string, string> = new Map<string, string>();
   private history: WireSessionEvent[] = [];
   private conversation: ConversationItem[] = [];
+  /** Session id + time of the last successful `history` load (see CATCHUP_FRESH_MS). */
+  private historyLoadedSessionId: string = '';
+  private historyLoadedAt: number = 0;
   private queues: Map<string, WireQueueItem[]> = new Map<string, WireQueueItem[]>();
   private questions: Map<string, QuestionCardRow> = new Map<string, QuestionCardRow>();
   private approvals: Map<string, ApprovalCardRow> = new Map<string, ApprovalCardRow>();
@@ -759,6 +771,11 @@ export class GatewayStore {
   async catchUpConversation(): Promise<void> {
     const sessionId = this.selectedSessionId;
     if (sessionId.length === 0 || !this.client.isConnected) {
+      return;
+    }
+    // `selectSession` just subscribed and loaded this session; the `onPageShow`
+    // that fires right after the push would otherwise fetch the same page again.
+    if (this.historyLoadedSessionId === sessionId && Date.now() - this.historyLoadedAt < CATCHUP_FRESH_MS) {
       return;
     }
     this.client.notify('subscribe', new SessionPayload('subscribe', sessionId));
@@ -1602,6 +1619,8 @@ export class GatewayStore {
       }
       this.conversation = items;
     }
+    this.historyLoadedSessionId = sessionId;
+    this.historyLoadedAt = Date.now();
     if (this.selectedSessionId !== sessionId) {
       return;
     }
