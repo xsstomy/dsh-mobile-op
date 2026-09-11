@@ -1706,7 +1706,11 @@ export class GatewayStore {
       this.connectBootstrapped().then(() => {
         this.publish();
       }).catch((error: Error) => {
-        this.notice = error.message;
+        // Bootstrap runs on the socket that just came up; a request rejected here
+        // is a transport failure ("连接已断开"), not a user-facing notice. Keep it
+        // in `failure` so the next successful connect clears it — writing it to
+        // `notice` left a stale green "连接已断开" next to an "已连接" status.
+        this.failure = { kind: GatewayFailureKind.NETWORK, detail: error.message };
         this.publish();
       });
     }
