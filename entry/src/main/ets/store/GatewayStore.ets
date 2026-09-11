@@ -164,6 +164,17 @@ const CATCHUP_FRESH_MS = 2000;
 const INITIAL_HISTORY_MESSAGES = 20;
 const HISTORY_PAGE_MESSAGES = 60;
 
+/**
+ * Re-entering a session should paint its transcript immediately instead of
+ * re-fetching it, so keep the last few conversations in memory and show the
+ * cached timeline as the first paint while `loadSessionData` still fetches the
+ * latest page in the background. `mergeHistoryPage` dedupes by `seq`, so the
+ * cached events are merged with (not dropped in favour of) the fresh page.
+ * Bounded so a long, deeply-paged session cannot pin memory.
+ */
+const MAX_CACHED_SESSIONS = 3;
+const MAX_CACHED_EVENTS = 3000;
+
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve: (value: void) => void) => {
     setTimeout(() => {
@@ -201,6 +212,9 @@ export class GatewayStore {
   private conversation: ConversationItem[] = [];
   /** True while the selected session's first history page is in flight. */
   private conversationLoading: boolean = false;
+  /** Last known timeline per session; bounded LRU used as the instant first paint. */
+  private historyCache: Map<string, WireSessionEvent[]> = new Map<string, WireSessionEvent[]>();
+  private historyCacheOrder: string[] = [];
   /** Session id + time of the last successful `history` load (see CATCHUP_FRESH_MS). */
   private historyLoadedSessionId: string = '';
   private historyLoadedAt: number = 0;
@@ -558,6 +572,8 @@ export class GatewayStore {
     const deviceId = await preferences.deviceId();
     await preferences.setEndpoint(endpoint);
     this.endpointCache = endpoint;
+    // A different gateway serves different sessions; never reuse cached ones.
+    this.clearHistoryCache();
     this.pairingInFlight = true;
     this.status = { state: GatewayConnectionState.CONNECTING, detail: endpoint, endpoint: endpoint, capabilities: [] };
     const credentials: GatewayCredentials = {
@@ -647,7 +663,9 @@ export class GatewayStore {
     this.selectedSessionId = '';
     this.workspaces = [];
     this.sessions = [];
+    this.history = [];
     this.conversation = [];
+    this.clearHistoryCache();
     this.publish();
   }
 
@@ -750,12 +768,45 @@ export class GatewayStore {
     }
   }
 
+  /** Keep (or refresh) the bounded per-session timeline cache. */
+  private cacheHistory(sessionId: string, events: WireSessionEvent[]): void {
+    if (sessionId.length === 0) {
+      return;
+    }
+    if (events.length > MAX_CACHED_EVENTS) {
+      // Too large to pin; drop any previous copy instead of holding it.
+      this.historyCache.delete(sessionId);
+      const stale = this.historyCacheOrder.indexOf(sessionId);
+      if (stale >= 0) {
+        this.historyCacheOrder.splice(stale, 1);
+      }
+      return;
+    }
+    this.historyCache.set(sessionId, events);
+    const previous = this.historyCacheOrder.indexOf(sessionId);
+    if (previous >= 0) {
+      this.historyCacheOrder.splice(previous, 1);
+    }
+    this.historyCacheOrder.push(sessionId);
+    while (this.historyCacheOrder.length > MAX_CACHED_SESSIONS) {
+      const evicted = this.historyCacheOrder.shift();
+      if (evicted !== undefined) {
+        this.historyCache.delete(evicted);
+      }
+    }
+  }
+
+  private clearHistoryCache(): void {
+    this.historyCache.clear();
+    this.historyCacheOrder = [];
+  }
+
   /**
-   * Synchronous half of opening a session: adopt the selection, clear the old
-   * transcript and mark the conversation as loading. Split out so the workspace
-   * can push the conversation page immediately and let the data arrive after the
-   * push (see `loadSessionData`) instead of blocking navigation on a large
-   * history page.
+   * Synchronous half of opening a session: adopt the selection, then either
+   * restore the cached transcript (instant first paint) or clear it and mark the
+   * conversation as loading. Split out so the workspace can push the conversation
+   * page immediately and let the data arrive after the push (see
+   * `loadSessionData`) instead of blocking navigation on a large history page.
    */
   beginSession(sessionId: string): void {
     if (this.statsRefreshTimer >= 0) {
@@ -763,9 +814,17 @@ export class GatewayStore {
       this.statsRefreshTimer = -1;
     }
     this.selectedSessionId = sessionId;
-    this.history = [];
-    this.conversation = [];
-    this.conversationLoading = true;
+    const cached = this.historyCache.get(sessionId);
+    if (cached !== undefined && cached.length > 0) {
+      // Show the last visit right away; `loadSessionData` still merges the latest.
+      this.history = cached.slice();
+      this.conversation = projectFromEvents(this.history);
+      this.conversationLoading = false;
+    } else {
+      this.history = [];
+      this.conversation = [];
+      this.conversationLoading = true;
+    }
     // Opening a session adopts the host's truth for it (a turn may already be
     // running, e.g. after a restart); the start time is unknown at this point.
     this.turnActivity = turnIdle();
@@ -1678,6 +1737,7 @@ export class GatewayStore {
     }
     this.historyLoadedSessionId = sessionId;
     this.historyLoadedAt = Date.now();
+    this.cacheHistory(sessionId, this.history);
     if (this.selectedSessionId !== sessionId) {
       return;
     }
@@ -1893,6 +1953,7 @@ export class GatewayStore {
       if (sessionId === this.selectedSessionId) {
         this.history = mergeLiveEvent(this.history, wireEvent).events;
         this.conversation = applyEvent(this.conversation, seq, wireEvent);
+        this.cacheHistory(this.selectedSessionId, this.history);
         // Live events only: replayed history must not re-light the indicator (a
         // merged `turn/start` from an old turn would look like a running one).
         this.turnActivity = applyTurnActivity(this.turnActivity, event.type ?? '',
