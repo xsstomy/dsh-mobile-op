@@ -1,5 +1,7 @@
 # DshMobile (HarmonyOS)
 
+> English version: [README_EN.md](README_EN.md)
+
 DeepSeek Harness 的 **HarmonyOS 原生客户端**（ArkTS + ArkUI，Stage 模型），通过第三方网关
 [`dsh-plugin-mobile-gateway`](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway) 的
 `dsh-mobile-v1` 协议（`hello.protocol = 3`）连接本机/自建的 DeepSeek Harness。
@@ -7,6 +9,12 @@ DeepSeek Harness 的 **HarmonyOS 原生客户端**（ArkTS + ArkUI，Stage 模�
 - 协议契约：[`docs/PROTOCOL.md`](docs/PROTOCOL.md)（上游 v0.7.2 原样收录）
 - 上游同类客户端（iOS / Android，KMP）：[`Clarklevis1995/dsh-mobile`](https://github.com/Clarklevis1995/dsh-mobile)
 - 本仓库是独立的 HarmonyOS 实现，不复用上游源码，署名见 [`NOTICE`](NOTICE)
+
+## 界面
+
+| 首页 | 对话 | 设置 |
+|---|---|---|
+| ![首页](docs/screenshots/home.jpg) | ![对话](docs/screenshots/conversation.jpg) | ![设置](docs/screenshots/settings.jpg) |
 
 ## 环境要求
 
