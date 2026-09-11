@@ -951,6 +951,9 @@ export class GatewayStore {
   async refreshModels(sessionId: string): Promise<void> {
     try {
       const frame = await this.client.request('models', new SessionPayload('models', sessionId));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.modelGroups = modelGroupsFrom(frame);
       this.currentModel = currentModelFrom(frame);
     } catch (failure) {
@@ -970,6 +973,9 @@ export class GatewayStore {
     try {
       const frame = await this.client.request('permission-options',
         new SessionPayload('permission-options', sessionId));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.permissionOptions = permissionOptionsFrom(frame);
       this.currentPermission = currentPermissionFrom(frame);
     } catch (failure) {
@@ -1055,6 +1061,9 @@ export class GatewayStore {
     }
     try {
       const frame = await this.client.request('commands', new CommandsQueryPayload(sessionId, 'zh-CN'));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.commandGroups = commandGroupsFrom(frame);
     } catch (failure) {
       void failure;
@@ -1545,6 +1554,9 @@ export class GatewayStore {
   async refreshTasks(sessionId: string): Promise<void> {
     try {
       const frame = await this.client.request('tasks', new SessionPayload('tasks', sessionId));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       // A slow query must not overwrite a push that already landed.
       if (shouldApplyTodos(frame.asOfSeq, this.todosSeq)) {
         this.todos = todoRowsOf(frame.todos);
@@ -1559,6 +1571,9 @@ export class GatewayStore {
   async refreshGoal(sessionId: string): Promise<void> {
     try {
       const frame = await this.client.request('goal', new SessionPayload('goal', sessionId));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.goal = this.goalRowOf(frame);
     } catch (failure) {
       void failure;
@@ -1612,6 +1627,9 @@ export class GatewayStore {
     this.statsRefreshedAt = Date.now();
     try {
       const frame = await this.client.request('session-stats', new SessionPayload('session-stats', sessionId));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       const sessionStats = frame.sessionStats;
       if (sessionStats === undefined) {
         this.stats = null;
@@ -1722,6 +1740,14 @@ export class GatewayStore {
   async loadHistory(sessionId: string, beforeSeq?: number): Promise<void> {
     const maxMessages = beforeSeq === undefined ? INITIAL_HISTORY_MESSAGES : HISTORY_PAGE_MESSAGES;
     const frame = await this.client.request('history', new HistoryPayload(sessionId, beforeSeq, maxMessages));
+    // The user may switch sessions while this page is in flight. Everything below
+    // merges into `this.history` / `this.conversation`, which by then belong to
+    // the *newly* selected session — applying a stale page would splice the
+    // previous session's events into the active transcript and poison its cache.
+    // The merge is synchronous, so checking once here is sufficient.
+    if (this.selectedSessionId !== sessionId) {
+      return;
+    }
     const page = asSessionEvents(frame);
     const outcome = mergeHistoryPage(this.history, page);
     this.history = outcome.events;
@@ -1738,9 +1764,6 @@ export class GatewayStore {
     this.historyLoadedSessionId = sessionId;
     this.historyLoadedAt = Date.now();
     this.cacheHistory(sessionId, this.history);
-    if (this.selectedSessionId !== sessionId) {
-      return;
-    }
     this.publish();
   }
 
