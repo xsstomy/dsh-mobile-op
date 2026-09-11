@@ -321,6 +321,20 @@ struct ConversationPage {
     }
   }
 
+  /**
+   * Composer shortcut: splice `/` or `@` at the caret so the existing slash /
+   * file menus open without the keyboard. Mirrors `selectMention`'s caret
+   * bookkeeping — the draft, `this.caret` and the TextArea controller must agree,
+   * otherwise the next menu scan looks at the wrong offset.
+   */
+  private insertComposerToken(token: string): void {
+    const at = Math.max(0, Math.min(this.caret, this.draft.length));
+    this.draft = `${this.draft.substring(0, at)}${token}${this.draft.substring(at)}`;
+    this.caret = at + token.length;
+    this.draftController.caretPosition(this.caret);
+    this.refreshMention();
+  }
+
   private isReasoningExpanded(key: string): boolean {
     return this.expandedReasoning.indexOf(key) >= 0;
   }
@@ -1498,6 +1512,34 @@ struct ConversationPage {
         // Model / effort / permission are set once and rarely touched, so the
         // three of them live behind one gear button on the composer action row.
         this.settingsButton()
+        // Quick-insert shortcuts: tapping `/` or `@` splices the symbol at the
+        // caret and opens the same command / file menus the keyboard would.
+        Text('/')
+          .id('slashShortcut')
+          .fontSize(AppFont.SUBTITLE)
+          .fontColor(AppColors.DARK_INK)
+          .textAlign(TextAlign.Center)
+          .width(34)
+          .height(34)
+          .backgroundColor(Glass.FILL_STRONG)
+          .borderRadius(AppRadius.CIRCLE)
+          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+          .onClick(() => {
+            this.insertComposerToken('/');
+          })
+        Text('@')
+          .id('mentionShortcut')
+          .fontSize(AppFont.SUBTITLE)
+          .fontColor(AppColors.DARK_INK)
+          .textAlign(TextAlign.Center)
+          .width(34)
+          .height(34)
+          .backgroundColor(Glass.FILL_STRONG)
+          .borderRadius(AppRadius.CIRCLE)
+          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+          .onClick(() => {
+            this.insertComposerToken('@');
+          })
         // The queue/steer delimiter only means something while a turn is running
         // (when idle both modes deliver a plain message), so it stays hidden
         // until then — same as DSH, which names the mode on the send button only
