@@ -145,6 +145,11 @@ export interface UiSnapshot {
   conversation: ConversationItem[];
   /** True while the selected session's first history page is still loading. */
   conversationLoading: boolean;
+  /** DeepSeek official balance line shown under the composer (official route only). */
+  balanceConfigured: boolean;
+  balanceDisplay: string;
+  balanceError: string;
+  balanceAt: number;
   queueCount: number;
   questions: QuestionCardRow[];
   approvals: ApprovalCardRow[];
@@ -215,6 +220,10 @@ export function emptyUiSnapshot(): UiSnapshot {
     activeSessionTitle: '',
     conversation: [],
     conversationLoading: false,
+    balanceConfigured: false,
+    balanceDisplay: '',
+    balanceError: '',
+    balanceAt: 0,
     queueCount: 0,
     questions: [],
     approvals: [],

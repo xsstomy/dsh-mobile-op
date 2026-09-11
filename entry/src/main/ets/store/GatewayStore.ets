@@ -19,6 +19,9 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { GatewayClient, GatewayConnectionState, GatewayCredentials, GatewayFailureKind, GatewayListener } from '../gateway/GatewayClient';
 import { GatewayPreferences } from '../auth/GatewayPreferences';
 import { TokenStore } from '../auth/TokenStore';
+import { DeepSeekKeyStore } from '../auth/DeepSeekKeyStore';
+import { fetchDeepSeekBalance } from '../auth/DeepSeekBalance';
+import { formatBalance, parseBalanceSnapshot } from '../protocol/Balance';
 import { WireFrame, WireQueueItem, WireSessionEvent, WireSessionSummary, WireWorkspace } from '../protocol/Types';
 import { asQueueItems, asSessionEvents, asSessionSummaries, asWorkspaces } from '../protocol/WireDecoder';
 import { mergeHistoryPage, mergeLiveEvent, titleOf } from '../sync/History';
@@ -175,6 +178,9 @@ const HISTORY_PAGE_MESSAGES = 60;
 const MAX_CACHED_SESSIONS = 3;
 const MAX_CACHED_EVENTS = 3000;
 
+/** The official balance changes slowly; do not hit it on every page show. */
+const BALANCE_REFRESH_MIN_MS = 60000;
+
 function delay(ms: number): Promise<void> {
   return new Promise<void>((resolve: (value: void) => void) => {
     setTimeout(() => {
@@ -191,6 +197,14 @@ export class GatewayStore {
   private readonly listener: StoreListener = new StoreListener(this);
   private preferences: GatewayPreferences | undefined;
   private tokens: TokenStore = new TokenStore();
+  private deepSeekKeys: DeepSeekKeyStore = new DeepSeekKeyStore();
+  /** Cached DeepSeek API key ('' = not configured). Never logged. */
+  private deepSeekKey: string = '';
+  private balanceDisplay: string = '';
+  private balanceError: string = '';
+  private balanceAt: number = 0;
+  private balanceFetchedAt: number = 0;
+  private balanceFetchInFlight: boolean = false;
 
   private status: StatusLine = {
     state: GatewayConnectionState.DISCONNECTED,
@@ -432,6 +446,10 @@ export class GatewayStore {
     snapshot.queueCount = (this.queues.get(this.selectedSessionId) ?? []).length;
     snapshot.conversation = this.conversation;
     snapshot.conversationLoading = this.conversationLoading;
+    snapshot.balanceConfigured = this.deepSeekKey.length > 0;
+    snapshot.balanceDisplay = this.balanceDisplay;
+    snapshot.balanceError = this.balanceError;
+    snapshot.balanceAt = this.balanceAt;
     const questions: QuestionCardRow[] = [];
     this.questions.forEach((question: QuestionCardRow) => {
       questions.push(question);
@@ -530,6 +548,8 @@ export class GatewayStore {
     this.appContext = context;
     this.preferences = await GatewayPreferences.open(context);
     await this.tokens.attach(context);
+    await this.deepSeekKeys.attach(context);
+    this.deepSeekKey = await this.deepSeekKeys.load();
     this.themeMode = await this.preferences.themeMode();
     this.showReasoning = await this.preferences.showReasoning();
     this.applyAppColorMode(this.themeMode);
@@ -680,6 +700,59 @@ export class GatewayStore {
     this.notice = '';
     this.noticeIsError = false;
     this.publish();
+  }
+
+  // ------------------------------------------------------- DeepSeek balance
+
+  /** Persist (or clear, on an empty string) the DeepSeek key and refresh at once. */
+  async saveDeepSeekKey(key: string): Promise<void> {
+    const trimmed = key.replace(/^\s+|\s+$/g, '');
+    if (trimmed.length === 0) {
+      await this.deepSeekKeys.clear();
+      this.deepSeekKey = '';
+      this.balanceDisplay = '';
+      this.balanceError = '';
+      this.balanceAt = 0;
+      this.balanceFetchedAt = 0;
+      this.publish();
+      return;
+    }
+    await this.deepSeekKeys.save(trimmed);
+    this.deepSeekKey = trimmed;
+    this.balanceFetchedAt = 0;
+    await this.refreshDeepSeekBalance(true);
+  }
+
+  /**
+   * Official balance refresh. Throttled unless forced. A failure keeps the last
+   * value and exposes only a short message — the key is never echoed.
+   */
+  async refreshDeepSeekBalance(force: boolean): Promise<void> {
+    if (this.deepSeekKey.length === 0 || this.balanceFetchInFlight) {
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - this.balanceFetchedAt < BALANCE_REFRESH_MIN_MS) {
+      return;
+    }
+    this.balanceFetchInFlight = true;
+    this.balanceFetchedAt = now;
+    try {
+      const body = await fetchDeepSeekBalance(this.deepSeekKey);
+      const display = formatBalance(parseBalanceSnapshot(body));
+      if (display.length === 0) {
+        this.balanceError = '接口返回不可用';
+      } else {
+        this.balanceDisplay = display;
+        this.balanceError = '';
+        this.balanceAt = Date.now();
+      }
+    } catch (failure) {
+      this.balanceError = (failure as Error).message;
+    } finally {
+      this.balanceFetchInFlight = false;
+      this.publish();
+    }
   }
 
   /**

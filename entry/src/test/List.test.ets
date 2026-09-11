@@ -1,3 +1,4 @@
+import balanceTest from './Balance.test';
 import conversationTest from './Conversation.test';
 import filesTest from './Files.test';
 import formatTest from './Format.test';
@@ -36,4 +37,5 @@ export default function testsuite(): void {
   formatTest();
   filesTest();
   gatewayFramesTest();
+  balanceTest();
 }

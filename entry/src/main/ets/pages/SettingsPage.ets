@@ -31,6 +31,8 @@ struct SettingsPage {
   @State openSection: string = '';
   /** Expanded picker inside the current-session card ('' = none). */
   @State sessionSection: string = '';
+  /** DeepSeek API-key input draft; cleared after saving. */
+  @State apiKeyDraft: string = '';
   private store: GatewayStore = GatewayStore.current;
 
   async aboutToAppear(): Promise<void> {
@@ -511,6 +513,93 @@ struct SettingsPage {
       .onClick(action)
   }
 
+  private balanceSettingsLine(): string {
+    if (!this.ui.balanceConfigured) {
+      return '未配置 API Key';
+    }
+    if (this.ui.balanceError.length > 0) {
+      return `查询失败：${this.ui.balanceError}`;
+    }
+    if (this.ui.balanceDisplay.length > 0) {
+      return `当前余额 ${this.ui.balanceDisplay}`;
+    }
+    return '已配置，等待查询…';
+  }
+
+  /**
+   * Official DeepSeek balance: the client calls api.deepseek.com directly with
+   * the user's own key, so this is the only place the key is entered.
+   */
+  @Builder
+  deepSeekBalanceCard() {
+    Column({ space: 8 }) {
+      Text('DeepSeek 余额').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%')
+      Text('仅支持官方开放平台。填入 API Key 后，在官方 DeepSeek 模型的会话底部显示剩余金额。')
+        .fontSize(10)
+        .fontColor(AppColors.INK_WEAK)
+        .width('100%')
+      TextInput({
+        placeholder: this.ui.balanceConfigured ? '已配置（留空保存可清除）' : 'sk-...',
+        text: this.apiKeyDraft
+      })
+        .id('deepSeekKeyInput')
+        .type(InputType.Password)
+        .fontSize(AppFont.CAPTION)
+        .fontColor(AppColors.DARK_INK)
+        .placeholderColor(AppColors.INK_WEAK)
+        .backgroundColor(Glass.FILL_SUBTLE)
+        .borderRadius(AppRadius.INPUT)
+        .width('100%')
+        .height(44)
+        .onChange((value: string) => {
+          this.apiKeyDraft = value;
+        })
+      Text(this.balanceSettingsLine())
+        .fontSize(10)
+        .fontColor(this.ui.balanceError.length > 0 ? AppColors.WARN : AppColors.INK_WEAK)
+        .width('100%')
+      Row({ space: 8 }) {
+        Text('保存并查询')
+          .fontSize(AppFont.LABEL)
+          .fontColor(AppColors.DARK_INK)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .height(44)
+          .backgroundColor(Glass.FILL)
+          .borderRadius(AppRadius.CARD)
+          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+          .onClick(() => {
+            this.run(async () => {
+              await this.store.saveDeepSeekKey(this.apiKeyDraft);
+              this.apiKeyDraft = '';
+            });
+          })
+        Text('刷新余额')
+          .fontSize(AppFont.LABEL)
+          .fontColor(AppColors.DARK_INK)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .height(44)
+          .backgroundColor(Glass.FILL)
+          .borderRadius(AppRadius.CARD)
+          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+          .onClick(() => {
+            this.run(async () => {
+              await this.store.refreshDeepSeekBalance(true);
+            });
+          })
+      }
+      .width('100%')
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(14)
+    .backgroundColor(Glass.FILL)
+    .borderRadius(AppRadius.CARD)
+    .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER })
+    .backgroundBlurStyle(BlurStyle.COMPONENT_THICK, Glass.blurOptions())
+  }
+
   build() {
     Stack() {
       HarnessBackground()
@@ -592,6 +681,7 @@ struct SettingsPage {
 
             this.sessionCard()
             this.defaultsCard()
+            this.deepSeekBalanceCard()
 
             Column({ space: 8 }) {
               Text('连接').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%')

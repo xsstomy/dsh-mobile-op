@@ -30,6 +30,7 @@ import { QueueRow, canSteer, placementLabel } from '../protocol/Queue';
 import { copyToClipboard, vibrateShort } from '../common/Platform';
 import { turnFooterText } from '../common/Format';
 import { FileEntryRow } from '../protocol/Files';
+import { isOfficialDeepSeekRoute } from '../protocol/Balance';
 import {
   ActiveAtToken, activeAtTokenInDraft, applyMention, filterMentionEntries, formatFileMention, mentionTargetOf
 } from '../protocol/Mentions';
@@ -103,6 +104,8 @@ struct ConversationPage {
    */
   onPageShow(): void {
     this.store.catchUpConversation();
+    // Official balance only, and throttled in the store.
+    this.store.refreshDeepSeekBalance(false);
   }
 
   /**
@@ -1410,6 +1413,32 @@ struct ConversationPage {
     return uri.indexOf('://') >= 0 ? uri : `file://${uri}`;
   }
 
+  private balanceLineText(): string {
+    if (!this.ui.balanceConfigured) {
+      return 'DeepSeek 余额未配置（设置里填入 API Key）';
+    }
+    if (this.ui.balanceError.length > 0) {
+      return `DeepSeek 余额查询失败：${this.ui.balanceError}`;
+    }
+    if (this.ui.balanceDisplay.length > 0) {
+      return `DeepSeek 余额 ${this.ui.balanceDisplay}`;
+    }
+    return 'DeepSeek 余额查询中…';
+  }
+
+  /** Balance footer: only the official DeepSeek route has a balance endpoint. */
+  @Builder
+  balanceLine() {
+    if (isOfficialDeepSeekRoute(this.ui.currentModel.provider, this.ui.modelGroups)) {
+      Text(this.balanceLineText())
+        .fontSize(10)
+        .fontColor(AppColors.INK_WEAK)
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+  }
+
   @Builder
   composer() {
     Column({ space: 10 }) {
@@ -1493,6 +1522,8 @@ struct ConversationPage {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
       }
+
+      this.balanceLine()
 
       Row({ space: 10 }) {
         Stack() {
