@@ -1,0 +1,26 @@
+DshMobile (HarmonyOS)
+Copyright (c) 2026 DshMobile contributors
+
+This project is an independent HarmonyOS (ArkTS/ArkUI) client for the
+DeepSeek Harness mobile gateway protocol. It reuses the protocol contract and
+the interaction model of the following MIT-licensed upstream projects, and
+derives its launcher icon from the second one. No source code is copied.
+
+1. dsh-plugin-mobile-gateway
+   https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway
+   version 0.7.2, commit 0128ece31e6492cae26be5433cf3d218263d4d7c
+   - docs/PROTOCOL.md is a verbatim copy of PROTOCOL.md from that repository.
+   - The client speaks the "dsh-mobile-v1" protocol defined there.
+   License: MIT
+
+2. dsh-mobile (Kotlin Multiplatform iOS/Android client)
+   https://github.com/Clarklevis1995/dsh-mobile
+   commit 826fff5d4369ec260e3fa7b3797e30a8636aff4e
+   - Used as a reference for protocol field coverage, request correlation and
+     history/projection behaviour. No source files are copied.
+   - The launcher icon (foreground/background layers) is derived from
+     AppIcon-light.png in that repository.
+   Copyright (c) 2026 Chaofan Li
+   License: MIT
+
+See LICENSE for the full MIT text.

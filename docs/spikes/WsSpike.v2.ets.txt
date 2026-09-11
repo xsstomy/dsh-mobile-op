@@ -1,0 +1,324 @@
+/*
+ * Temporary stage-0 protocol spike (v2). Delete together with its main_pages entry.
+ * Phase A pairing, Phase B token auth + split channels + queries, Phase C frame size.
+ */
+import { webSocket } from '@kit.NetworkKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
+import { buffer } from '@kit.ArkTS';
+import { util } from '@kit.ArkTS';
+
+const TAG = 'WsSpike';
+const PAIRING_QR = '<redacted>';
+const LAN_URL = 'ws://10.0.2.2:3081/ws/mobile';
+
+interface AttemptResult {
+  outcome: string;
+  detail: string;
+}
+
+interface SocketHandle {
+  socket: webSocket.WebSocket;
+  frames: string[];
+  closed: boolean;
+  closeInfo: string;
+  errorInfo: string;
+  waiters: Array<() => void>;
+}
+
+function decodeBase64Url(value: string): string {
+  let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  while (normalized.length % 4 !== 0) {
+    normalized += '=';
+  }
+  return buffer.from(normalized, 'base64').toString('utf8');
+}
+
+function open(label: string, url: string, options: webSocket.WebSocketRequestOptions,
+  onFrame?: (text: string) => void): SocketHandle {
+  const socket = webSocket.createWebSocket();
+  const handle: SocketHandle = {
+    socket: socket,
+    frames: [],
+    closed: false,
+    closeInfo: '',
+    errorInfo: '',
+    waiters: []
+  };
+  socket.on('message', (error: BusinessError, value: string | ArrayBuffer) => {
+    void error;
+    const text: string = typeof value === 'string' ? value : buffer.from(value as ArrayBuffer).toString('utf8');
+    handle.frames.push(text);
+    if (onFrame) {
+      onFrame(text);
+    }
+    const waiters = handle.waiters;
+    handle.waiters = [];
+    for (const waiter of waiters) {
+      waiter();
+    }
+  });
+  socket.on('error', (error: BusinessError) => {
+    handle.errorInfo = `code=${error.code} msg=${error.message}`;
+  });
+  socket.on('close', (error: BusinessError, value: webSocket.CloseResult) => {
+    void error;
+    handle.closed = true;
+    handle.closeInfo = `code=${value.code} reason=${value.reason}`;
+    const waiters = handle.waiters;
+    handle.waiters = [];
+    for (const waiter of waiters) {
+      waiter();
+    }
+  });
+  socket.on('open', (error: BusinessError, value: Object) => {
+    void error;
+    void value;
+  });
+  socket.connect(url, options, (error: BusinessError, value: boolean) => {
+    void value;
+    if (error) {
+      handle.errorInfo = `connect code=${error.code} msg=${error.message}`;
+    }
+  });
+  hilog.info(0x0000, TAG, 'open %{public}s', label);
+  return handle;
+}
+
+function waitFor(handle: SocketHandle, predicate: (text: string) => boolean, timeoutMs: number): Promise<string> {
+  return new Promise<string>((resolve: (value: string) => void) => {
+    const deadline = Date.now() + timeoutMs;
+    const check = (): boolean => {
+      for (const text of handle.frames) {
+        if (predicate(text)) {
+          resolve(text);
+          return true;
+        }
+      }
+      return false;
+    };
+    if (check()) {
+      return;
+    }
+    const tick = (): void => {
+      if (check()) {
+        return;
+      }
+      if (Date.now() > deadline || handle.closed) {
+        resolve(handle.closed ? `__closed__${handle.closeInfo}` : '__timeout__');
+        return;
+      }
+      handle.waiters.push(tick);
+      setTimeout(tick, 250);
+    };
+    setTimeout(tick, 100);
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve: () => void) => setTimeout(resolve, ms));
+}
+
+@Entry
+@Component
+struct WsSpike {
+  @State logText: string = '';
+  @State finished: boolean = false;
+
+  private append(line: string): void {
+    this.logText = `${this.logText}${line}\n`;
+    hilog.info(0x0000, TAG, '%{public}s', line);
+  }
+
+  private async phaseA(): Promise<string> {
+    const payload = JSON.parse(decodeBase64Url(PAIRING_QR)) as Record<string, string>;
+    const deviceId = `spike-${util.generateRandomUUID(false)}`;
+    let token = '';
+    let done = false;
+    const options: webSocket.WebSocketRequestOptions = {
+      header: { 'X-DSH-Device-ID': deviceId },
+      protocol: `dsh-mobile-v1, dsh-pair.${payload.pairingCode}`
+    };
+    const handle = open('pair', LAN_URL, options, (text: string) => {
+      if (text.indexOf('"kind":"paired"') >= 0 && !done) {
+        const frame = JSON.parse(text) as Record<string, Object>;
+        token = frame.token as string;
+        done = true;
+      }
+    });
+    const hello = await waitFor(handle, (text: string) => text.indexOf('"kind":"hello"') >= 0, 10000);
+    if (token === '') {
+      this.append(`A. pair failed: hello=${hello.substring(0, 120)} err=${handle.errorInfo}`);
+      handle.socket.close();
+      return '';
+    }
+    this.append(`A. pair ok: deviceId=${deviceId} tokenLen=${token.length}`);
+    this.append(`A. hello=${hello.substring(0, 240)}`);
+    handle.socket.close();
+    await delay(500);
+    return token;
+  }
+
+  private async phaseB(token: string): Promise<void> {
+    const deviceId = `spike-b-${Date.now()}`;
+    const controlOptions: webSocket.WebSocketRequestOptions = {
+      header: { 'X-DSH-Device-ID': deviceId, Authorization: `Bearer ${token}`, 'X-DSH-Channel': 'control' },
+      protocol: 'dsh-mobile-v1'
+    };
+    const control = open('control', LAN_URL, controlOptions);
+    const controlHello = await waitFor(control, (text: string) => text.indexOf('"kind":"hello"') >= 0, 10000);
+    if (controlHello.indexOf('"kind":"hello"') < 0) {
+      this.append(`B. control hello failed: ${controlHello} err=${control.errorInfo}`);
+      control.socket.close();
+      return;
+    }
+    const capabilities = controlHello.indexOf('split-channels') >= 0 ? 'split-channels' : 'legacy';
+    this.append(`B. control connected (${capabilities})`);
+
+    const conversationOptions: webSocket.WebSocketRequestOptions = {
+      header: { 'X-DSH-Device-ID': deviceId, Authorization: `Bearer ${token}`, 'X-DSH-Channel': 'conversation' },
+      protocol: 'dsh-mobile-v1'
+    };
+    const conversation = open('conversation', LAN_URL, conversationOptions);
+    const conversationHello = await waitFor(conversation, (text: string) => text.indexOf('"kind":"hello"') >= 0, 10000);
+    this.append(`B. conversation hello: ${conversationHello.indexOf('"kind":"hello"') >= 0 ? 'ok' : conversationHello}`);
+
+    control.socket.send(JSON.stringify({ type: 'workspaces' }), (error: BusinessError) => {
+      if (error) {
+        this.append(`B. send workspaces error: ${error.code} ${error.message}`);
+      }
+    });
+    const workspaces = await waitFor(control, (text: string) => text.indexOf('"kind":"workspaces"') >= 0, 10000);
+    this.append(`B. workspaces: ${workspaces.indexOf('"kind":"workspaces"') >= 0 ? `ok (${workspaces.length} bytes)` : workspaces.substring(0, 120)}`);
+
+    // wrong-lane guard: a conversation request on the control lane must be rejected
+    control.socket.send(JSON.stringify({ type: 'history', sessionId: 'x' }), (error: BusinessError) => {
+      void error;
+    });
+    const wrongLane = await waitFor(control, (text: string) => text.indexOf('wrong-channel') >= 0, 8000);
+    this.append(`B. wrong-channel guard: ${wrongLane.indexOf('wrong-channel') >= 0 ? 'ok' : wrongLane.substring(0, 100)}`);
+
+    control.socket.close();
+    conversation.socket.close();
+    await delay(300);
+  }
+
+  private async phaseC(token: string): Promise<void> {
+    const options: webSocket.WebSocketRequestOptions = {
+      header: { 'X-DSH-Device-ID': `spike-c-${Date.now()}`, Authorization: `Bearer ${token}`, 'X-DSH-Channel': 'control' },
+      protocol: 'dsh-mobile-v1'
+    };
+    const handle = open('framesize', LAN_URL, options);
+    const hello = await waitFor(handle, (text: string) => text.indexOf('"kind":"hello"') >= 0, 10000);
+    if (hello.indexOf('"kind":"hello"') < 0) {
+      this.append(`C. connect failed: ${hello}`);
+      handle.socket.close();
+      return;
+    }
+    for (const size of [2 * 1024 * 1024, 3 * 1024 * 1024, 4 * 1024 * 1024, 6 * 1024 * 1024, 7 * 1024 * 1024]) {
+      const payload = 'x'.repeat(size);
+      const request = JSON.stringify({ type: '__probe_pad__', pad: payload });
+      const before = handle.frames.length;
+      const outcome = await new Promise<string>((resolve: (value: string) => void) => {
+        let settled = false;
+        handle.socket.send(request, (error: BusinessError) => {
+          if (error && !settled) {
+            settled = true;
+            resolve(`send-error code=${error.code} msg=${error.message}`);
+          }
+        });
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            resolve('no-reply');
+          }
+        }, 8000);
+        const tick = (): void => {
+          if (settled) {
+            return;
+          }
+          for (let index = before; index < handle.frames.length; index += 1) {
+            if (handle.frames[index].indexOf('__probe_pad__') >= 0) {
+              settled = true;
+              clearTimeout(timer);
+              resolve('echoed-error');
+              return;
+            }
+          }
+          if (handle.closed) {
+            settled = true;
+            clearTimeout(timer);
+            resolve(`closed ${handle.closeInfo}`);
+            return;
+          }
+          setTimeout(tick, 200);
+        };
+        setTimeout(tick, 200);
+      });
+      this.append(`C. json frame ${(size / 1024 / 1024).toFixed(0)}MB -> ${outcome}`);
+      if (outcome.indexOf('closed') === 0 || outcome.indexOf('send-error') === 0) {
+        break;
+      }
+    }
+    handle.socket.close();
+    await delay(300);
+  }
+
+  private async phaseD(token: string): Promise<void> {
+    const options: webSocket.WebSocketRequestOptions = {
+      header: { 'X-DSH-Device-ID': `spike-d-${Date.now()}`, Authorization: `Bearer ${token}`, 'X-DSH-Channel': 'control' },
+      protocol: 'dsh-mobile-v1'
+    };
+    const handle = open('serverclose', LAN_URL, options);
+    const hello = await waitFor(handle, (text: string) => text.indexOf('"kind":"hello"') >= 0, 10000);
+    if (hello.indexOf('"kind":"hello"') < 0) {
+      this.append(`D. connect failed: ${hello}`);
+      handle.socket.close();
+      return;
+    }
+    this.append('D. connected, waiting for server-initiated close (gateway will be disabled)');
+    const closeResult = await waitFor(handle, (text: string) => text.indexOf('__never__') >= 0, 40000);
+    this.append(`D. close observed: ${closeResult} err=${handle.errorInfo}`);
+    await delay(200);
+  }
+
+  private async run(): Promise<void> {
+    this.append('=== WsSpike v2 start ===');
+    if (PAIRING_QR.startsWith('__')) {
+      this.append('PAIRING_QR not patched; aborting');
+      this.finished = true;
+      return;
+    }
+    const token = await this.phaseA();
+    if (token !== '') {
+      await this.phaseB(token);
+      await this.phaseD(token);
+    }
+    this.append('=== WsSpike v2 done ===');
+    this.finished = true;
+  }
+
+  build() {
+    Column({ space: 8 }) {
+      Text('WsSpike v2').fontSize(18).fontWeight(FontWeight.Bold)
+      Text(this.finished ? 'DONE' : 'RUNNING').fontSize(14).id('spikeStatus')
+      Scroll() {
+        Text(this.logText).fontSize(10).textAlign(TextAlign.Start).width('100%').id('spikeLog')
+      }
+      .layoutWeight(1)
+      .width('100%')
+      .backgroundColor('#F1F3F5')
+      Button('rerun').id('spikeRerun').onClick(() => {
+        this.logText = '';
+        this.finished = false;
+        this.run();
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .padding(12)
+    .onAppear(() => {
+      this.run();
+    })
+  }
+}

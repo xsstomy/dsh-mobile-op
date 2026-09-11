@@ -1,0 +1,12 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/PairingPage",
+    "pages/WorkspacePage",
+    "pages/ConversationPage",
+    "pages/TrajectoryPage",
+    "pages/WorkspaceBrowserPage",
+    "pages/WorkspaceFilesPage",
+    "pages/SettingsPage"
+  ]
+}

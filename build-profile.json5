@@ -1,0 +1,44 @@
+{
+  app: {
+    // Signing is deliberately NOT committed. Configure it locally:
+    //   DevEco Studio -> Project Structure -> Signing Configs (auto sign), or
+    //   devecocli signature generate --product default
+    // See README "构建与运行".
+    products: [
+      {
+        name: 'default',
+        targetSdkVersion: '6.1.1(24)',
+        compatibleSdkVersion: '5.0.0(12)',
+        runtimeOS: 'HarmonyOS',
+        buildOption: {
+          strictMode: {
+            caseSensitiveCheck: true,
+            useNormalizedOHMUrl: true,
+          },
+        },
+      },
+    ],
+    buildModeSet: [
+      {
+        name: 'debug',
+      },
+      {
+        name: 'release',
+      },
+    ],
+  },
+  modules: [
+    {
+      name: 'entry',
+      srcPath: './entry',
+      targets: [
+        {
+          name: 'default',
+          applyToProducts: [
+            'default',
+          ],
+        },
+      ],
+    },
+  ],
+}

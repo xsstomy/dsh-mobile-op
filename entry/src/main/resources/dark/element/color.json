@@ -1,0 +1,27 @@
+{
+  "color": [
+    { "name": "start_window_background", "value": "#0A2544" },
+    { "name": "ink", "value": "#F1F4FA" },
+    { "name": "ink_weak", "value": "#A9B8D0" },
+    { "name": "ink_strong", "value": "#0E131A" },
+    { "name": "mist", "value": "#BFD6FF" },
+    { "name": "on_atmosphere", "value": "#F9FAFC" },
+    { "name": "glass_fill", "value": "#14FFFFFF" },
+    { "name": "glass_fill_strong", "value": "#1FFFFFFF" },
+    { "name": "glass_fill_subtle", "value": "#0DFFFFFF" },
+    { "name": "glass_border", "value": "#33FFFFFF" },
+    { "name": "glass_border_soft", "value": "#1FFFFFFF" },
+    { "name": "code_fill", "value": "#66000000" },
+    { "name": "code_label", "value": "#8FA3C0" },
+    { "name": "brand", "value": "#2E6BE6" },
+    { "name": "ok", "value": "#2EB85C" },
+    { "name": "warn", "value": "#FFAD1F" },
+    { "name": "danger", "value": "#FF5C6C" },
+    { "name": "purple", "value": "#7A54C7" },
+    { "name": "orange", "value": "#F07D14" },
+    { "name": "paper", "value": "#F9FAFC" },
+    { "name": "atmosphere_top", "value": "#0A2544" },
+    { "name": "atmosphere_mid", "value": "#12467F" },
+    { "name": "atmosphere_bottom", "value": "#06172B" }
+  ]
+}
