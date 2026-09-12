@@ -35,7 +35,7 @@ import {
 import { TodoRow, shouldApplyTodos, todoRowsOf } from '../sync/Todos';
 import {
   applyEventToRoster, applySessionTitle, applySummaryTitles, displayTitleOf, mergeSessionRows,
-  nextTitleSeq, projectedTitleOf, projectionsSeqOf, SessionTitle
+  nextTitleSeq, projectedTitleOf, projectionsSeqOf, rosterIncludesSession, SessionTitle
 } from '../sync/Sessions';
 import { TrajectoryRow, buildTrajectory } from '../projection/Trajectory';
 import { CrumbRow, FileEntryRow, PreviewKind, fileRowsFrom, isTextPreview, previewKindOf, sha256Matches, sortEntries } from '../protocol/Files';
@@ -361,14 +361,8 @@ export class GatewayStore {
       if (id.length === 0 || this.archivedSessionIds.indexOf(id) >= 0) {
         continue;
       }
-      if (this.selectedWorkspaceId.length > 0) {
-        const workspace = this.workspaceOf(this.selectedWorkspaceId);
-        if (workspace !== undefined) {
-          const ids = workspace.sessionIds ?? [];
-          if (ids.length > 0 && ids.indexOf(id) < 0) {
-            continue;
-          }
-        }
+      if (!rosterIncludesSession(this.workspaces, this.selectedWorkspaceId, id)) {
+        continue;
       }
       result.push(session);
     }

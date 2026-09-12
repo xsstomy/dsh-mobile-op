@@ -8,9 +8,9 @@
 import { describe, expect, it } from '@ohos/hypium';
 import {
   applyEventToRoster, applySessionTitle, applySummaryTitles, displayTitleOf, mergeSessionRows,
-  nextTitleSeq, projectedTitleOf, projectionsSeqOf, SessionTitle
+  nextTitleSeq, projectedTitleOf, projectionsSeqOf, rosterIncludesSession, SessionTitle
 } from '../main/ets/sync/Sessions';
-import { WireSessionSummary } from '../main/ets/protocol/Types';
+import { WireSessionSummary, WireWorkspace } from '../main/ets/protocol/Types';
 import { asSessionSummaries, decodeFrame } from '../main/ets/protocol/WireDecoder';
 import { emptyEvent, titleEvent, userEvent } from './TestHelpers';
 import { SESSIONS_FRAME } from './fixtures/Frames';
@@ -137,6 +137,25 @@ export default function sessionsTest(): void {
       // A row with no local history is left alone.
       const born = mergeSessionRows(current, [new Summary('s2', 10, false, true)]);
       expect(born[0].blank).assertTrue();
+    });
+
+    it('keeps the roster scoped but never hides an ungrouped session', 0, () => {
+      const workspaces: WireWorkspace[] = [
+        { workspaceId: 'w1', sessionIds: ['s1', 's2'] },
+        { workspaceId: 'w2', sessionIds: ['s3'] }
+      ];
+      // No selection: nothing is filtered.
+      expect(rosterIncludesSession(workspaces, '', 's3')).assertTrue();
+      // The selected workspace's own sessions show.
+      expect(rosterIncludesSession(workspaces, 'w1', 's1')).assertTrue();
+      // Another workspace's session stays scoped out.
+      expect(rosterIncludesSession(workspaces, 'w1', 's3')).assertFalse();
+      // A session no workspace owns (desktop-created by path only) must show.
+      expect(rosterIncludesSession(workspaces, 'w1', 'ungrouped')).assertTrue();
+      // A stale selection shows everything instead of an empty list.
+      expect(rosterIncludesSession(workspaces, 'gone', 's3')).assertTrue();
+      // A workspace with no ids listed never filters.
+      expect(rosterIncludesSession([{ workspaceId: 'w1' }], 'w1', 'anything')).assertTrue();
     });
   });
 }

@@ -16,7 +16,7 @@
  * too, so the home list reflects activity instead of waiting for the next
  * full `sessions` request.
  */
-import { WireSessionEvent, WireSessionSummary } from '../protocol/Types';
+import { WireSessionEvent, WireSessionSummary, WireWorkspace } from '../protocol/Types';
 
 /** One session's display title plus the sequence that produced it. */
 export class SessionTitle {
@@ -194,4 +194,51 @@ export function mergeSessionRows(
     }
   }
   return incoming;
+}
+
+/**
+ * Whether a session belongs on the home roster for the workspace in view.
+ *
+ * The host groups a session under the workspace it was created in
+ * (`workspace.sessionIds`), but a session created elsewhere by path only — the
+ * desktop WebUI sends `cwd` and no `workspaceId` — belongs to no workspace at
+ * all. Those "ungrouped" sessions were dropped together with the other
+ * workspaces' rows, so a conversation just created on the desktop stayed
+ * invisible on the phone even after tapping 刷新 (its `cwd` matches the
+ * workspace, so the host still lists it under that project).
+ *
+ * Keep the roster scoped to the selected workspace, but never hide a session
+ * that no workspace owns. A session owned by a *different* workspace still
+ * stays out, so switching the workspace keeps scoping the list.
+ */
+export function rosterIncludesSession(
+  workspaces: WireWorkspace[], selectedWorkspaceId: string, sessionId: string
+): boolean {
+  if (selectedWorkspaceId.length === 0) {
+    return true;
+  }
+  let selected: WireWorkspace | undefined = undefined;
+  for (const workspace of workspaces) {
+    if ((workspace.workspaceId ?? '') === selectedWorkspaceId) {
+      selected = workspace;
+      break;
+    }
+  }
+  if (selected === undefined) {
+    // The persisted selection is gone; showing everything beats an empty list.
+    return true;
+  }
+  const ids = selected.sessionIds ?? [];
+  if (ids.length === 0 || ids.indexOf(sessionId) >= 0) {
+    return true;
+  }
+  for (const workspace of workspaces) {
+    if ((workspace.workspaceId ?? '') === selectedWorkspaceId) {
+      continue;
+    }
+    if ((workspace.sessionIds ?? []).indexOf(sessionId) >= 0) {
+      return false;
+    }
+  }
+  return true;
 }
