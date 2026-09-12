@@ -13,6 +13,8 @@ const KEY_DEVICE_ID = 'deviceId';
 const KEY_WORKSPACE_ID = 'workspaceId';
 const KEY_LAST_SESSION = 'lastSessionId';
 const KEY_RECENT_ENDPOINTS = 'recentEndpoints';
+const KEY_ENDPOINT_RECORDS = 'endpointRecords';
+const KEY_AUTO_SWITCH = 'autoSwitch';
 const KEY_THEME_MODE = 'themeMode';
 const KEY_SHOW_REASONING = 'showReasoning';
 
@@ -83,6 +85,31 @@ export class GatewayPreferences {
       }
     }
     return result;
+  }
+
+  /**
+   * Every address the device has connected through, serialized by
+   * sync/Endpoints. Kept next to the active endpoint so a manual or automatic
+   * switch can offer the same credential on a different listener.
+   */
+  async endpointRecordsRaw(): Promise<string> {
+    return this.getString(KEY_ENDPOINT_RECORDS, '');
+  }
+
+  async setEndpointRecordsRaw(value: string): Promise<void> {
+    await this.put(KEY_ENDPOINT_RECORDS, value);
+  }
+
+  /**
+   * Whether the client may pick a better address on its own. Defaults to ON:
+   * the whole point is to prefer the LAN at home without a manual tap.
+   */
+  async autoSwitch(): Promise<boolean> {
+    return (await this.getString(KEY_AUTO_SWITCH, '1')) === '1';
+  }
+
+  async setAutoSwitch(value: boolean): Promise<void> {
+    await this.put(KEY_AUTO_SWITCH, value ? '1' : '0');
   }
 
   /** Stable installation id: reused for re-pairing so the gateway keeps one device row. */

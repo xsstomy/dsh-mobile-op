@@ -55,6 +55,11 @@ import { cacheHitPercent, contextUsedPercent, readTokenTotals, statsRefreshDelay
 import { isTransportUnavailable } from '../gateway/RequestTracker';
 import { NetworkMonitor } from '../gateway/NetworkMonitor';
 import {
+  DEFAULT_LAN_PORT, SavedEndpoint, lanUrlFor, normalizeEndpointInput, parseSavedEndpoints, preferredEndpoint,
+  removeSavedEndpoint, serializeSavedEndpoints, subnetProbeHosts, upsertSavedEndpoint
+} from '../sync/Endpoints';
+import { LanScanner } from '../gateway/LanScanner';
+import {
   ApprovalResponsePayload, CommandExecutePayload, DirectoryCreatePayload, DirectoryListPayload, CommandQueryPayload, CommandSelectPayload, CommandsQueryPayload,
   GoalMutationPayload, GoalRef, HistoryPayload, MessagePayload, PermissionPayload, QuestionAnswerItem,
   QuestionAnswerPayload, QuestionCancelPayload, RenamePayload, SaveDefaultModelPayload, SelectModelPayload,
@@ -67,6 +72,15 @@ export const UI_KEY = 'gwUi';
 
 /** Kept for pages that only need a re-render nudge (see UiState for the real state). */
 export const VERSION_KEY = 'gwUiVersion';
+
+/** How many addresses one gateway may keep; oldest are dropped past this. */
+const SAVED_ENDPOINT_LIMIT = 8;
+
+/** Upper bound on hosts probed by the LAN discovery scan (one /24). */
+const LAN_SCAN_HOST_LIMIT = 254;
+
+/** Per-host TCP timeout for the LAN scan: long enough for Wi-Fi, short enough to sweep. */
+const LAN_SCAN_TIMEOUT_MS = 400;
 
 /**
  * The agent preset a session was started with. The host reports it inside
@@ -269,6 +283,15 @@ export class GatewayStore {
   private busy: boolean = false;
   private pairingInFlight: boolean = false;
   private savedToken: string = '';
+  /** Saved addresses for the current gateway, newest first (sync/Endpoints). */
+  private savedEndpoints: SavedEndpoint[] = [];
+  /** Auto endpoint switching: prefer the LAN at home, the public URL elsewhere. */
+  private autoSwitch: boolean = true;
+  /** Re-entrancy guard so a network flap cannot stack auto-selections. */
+  private autoSelecting: boolean = false;
+  /** LAN discovery: probes the current /24 for the gateway listener. */
+  private readonly lanScanner: LanScanner = new LanScanner();
+  private scanning: boolean = false;
 
   static get current(): GatewayStore {
     if (GatewayStore.instance === undefined) {
@@ -421,6 +444,9 @@ export class GatewayStore {
     snapshot.connection = this.status.state;
     snapshot.connectionDetail = this.status.detail;
     snapshot.endpoint = this.endpointCache.length > 0 ? this.endpointCache : this.status.endpoint;
+    snapshot.savedEndpoints = this.savedEndpoints;
+    snapshot.autoSwitch = this.autoSwitch;
+    snapshot.endpointScanning = this.scanning;
     snapshot.capabilities = this.status.capabilities;
     snapshot.notice = this.notice;
     snapshot.noticeIsError = this.noticeIsError;
@@ -554,16 +580,38 @@ export class GatewayStore {
     // network is usable again (wifi/radio came back).
     this.network.start(() => {
       this.client.retryNow();
+    }, () => {
+      // Wi-Fi/cellular changed: re-evaluate the preferred address. A live
+      // connection is never torn down here (see maybeAutoSelect).
+      void this.maybeAutoSelect();
     });
-    const endpoint = await this.preferences.endpoint();
+    this.autoSwitch = await this.preferences.autoSwitch();
+    this.savedEndpoints = parseSavedEndpoints(await this.preferences.endpointRecordsRaw());
+    let endpoint = await this.preferences.endpoint();
     this.endpointCache = endpoint;
+    const token = endpoint.length > 0 ? await this.tokens.load(endpoint) : '';
+    this.savedToken = token;
+    if (token.length > 0 && endpoint.length > 0) {
+      // Record the paired address so an install that predates this feature
+      // starts with a one-row list instead of an empty one.
+      this.savedEndpoints = upsertSavedEndpoint(this.savedEndpoints, endpoint, Date.now(), SAVED_ENDPOINT_LIMIT);
+      await this.preferences.setEndpointRecordsRaw(serializeSavedEndpoints(this.savedEndpoints));
+      await this.saveTokenToAll();
+      // Prefer a better address (the LAN at home) before the first connect. The
+      // token is gateway-scoped, so it is copied to the chosen alias.
+      const preferred = preferredEndpoint(this.savedEndpoints, this.network.hint());
+      if (this.autoSwitch && preferred.length > 0 && preferred !== endpoint) {
+        endpoint = preferred;
+        this.endpointCache = preferred;
+        await this.preferences.setEndpoint(preferred);
+        await this.tokens.save(preferred, token);
+      }
+    }
     if (endpoint.length > 0) {
       // Show the stored endpoint even when the token is missing, so the UI can
       // explain what is wrong instead of claiming "not configured".
       this.status = { state: GatewayConnectionState.DISCONNECTED, detail: '已保存端点', endpoint: endpoint, capabilities: [] };
     }
-    const token = endpoint.length > 0 ? await this.tokens.load(endpoint) : '';
-    this.savedToken = token;
     if (token.length === 0 && endpoint.length > 0) {
       this.notice = '未找到该端点的设备 token，请重新配对';
     }
@@ -586,6 +634,9 @@ export class GatewayStore {
     const deviceId = await preferences.deviceId();
     await preferences.setEndpoint(endpoint);
     this.endpointCache = endpoint;
+    // Keep BOTH the QR's public address and any manual LAN override: one pairing
+    // yields one token that authenticates on either listener.
+    await this.rememberEndpoint(parsed.publicUrl, false);
     // A different gateway serves different sessions; never reuse cached ones.
     this.clearHistoryCache();
     this.pairingInFlight = true;
@@ -658,6 +709,207 @@ export class GatewayStore {
     this.client.connect({ endpoint: endpoint, deviceId: deviceId, token: token });
   }
 
+  /**
+   * Remember an address the client has used, newest first, and (optionally) keep
+   * a copy of the device token under its alias so a later switch reconnects
+   * without re-pairing. The credential is gateway-scoped (PROTOCOL.md §1), so
+   * copying it to a second listener of the same gateway is the intended model.
+   */
+  private async rememberEndpoint(url: string, copyToken: boolean): Promise<void> {
+    const trimmed = url.replace(/^s+|s+$/g, '');
+    if (trimmed.length === 0) {
+      return;
+    }
+    this.savedEndpoints = upsertSavedEndpoint(this.savedEndpoints, trimmed, Date.now(), SAVED_ENDPOINT_LIMIT);
+    const preferences = this.preferences;
+    if (preferences !== undefined) {
+      await preferences.setEndpointRecordsRaw(serializeSavedEndpoints(this.savedEndpoints));
+    }
+    if (copyToken && this.savedToken.length > 0) {
+      await this.saveTokenToAll();
+    }
+  }
+
+  /**
+   * Keep the (gateway-scoped) device token under every saved alias, so whichever
+   * address ends up active after a restart can be loaded by `connectSaved`.
+   */
+  private async saveTokenToAll(): Promise<void> {
+    if (this.savedToken.length === 0) {
+      return;
+    }
+    for (const saved of this.savedEndpoints) {
+      try {
+        await this.tokens.save(saved.url, this.savedToken);
+      } catch (error) {
+        hilog.warn(0x0000, 'GatewayStore', 'endpoint token copy failed: %{public}s', JSON.stringify(error));
+      }
+    }
+  }
+
+  /** Add a user-typed address: host, host:port or a full ws/wss URL. */
+  async addEndpoint(text: string): Promise<boolean> {
+    const url = normalizeEndpointInput(text);
+    if (url.length === 0) {
+      return false;
+    }
+    await this.rememberEndpoint(url, true);
+    this.publish();
+    return true;
+  }
+
+  /** Forget an address. If it was active, the live connection moves to another. */
+  async forgetEndpoint(url: string): Promise<void> {
+    this.savedEndpoints = removeSavedEndpoint(this.savedEndpoints, url);
+    const preferences = this.preferences;
+    if (preferences !== undefined) {
+      await preferences.setEndpointRecordsRaw(serializeSavedEndpoints(this.savedEndpoints));
+    }
+    if (url === this.endpointCache) {
+      const next = preferredEndpoint(this.savedEndpoints, this.network.hint());
+      if (next.length > 0) {
+        await this.switchEndpoint(next);
+        return;
+      }
+    } else {
+      await this.tokens.clear(url);
+    }
+    this.publish();
+  }
+
+  /**
+   * Switch the live connection to another saved address of the same gateway.
+   * Session/workspace caches are deliberately kept: only the transport changes.
+   */
+  async switchEndpoint(url: string): Promise<void> {
+    const preferences = this.preferences;
+    const trimmed = url.replace(/^s+|s+$/g, '');
+    if (preferences === undefined || trimmed.length === 0) {
+      return;
+    }
+    const state = this.client.connectionState;
+    if (trimmed === this.endpointCache &&
+      (state === GatewayConnectionState.CONNECTED || state === GatewayConnectionState.CONNECTING ||
+        state === GatewayConnectionState.AUTHENTICATING)) {
+      return;
+    }
+    let token = this.savedToken;
+    if (token.length === 0 && this.endpointCache.length > 0) {
+      token = await this.tokens.load(this.endpointCache);
+    }
+    if (token.length === 0) {
+      token = await this.tokens.load(trimmed);
+    }
+    if (token.length === 0) {
+      this.notice = '该地址没有可用凭据，请先配对';
+      this.noticeIsError = true;
+      await this.rememberEndpoint(trimmed, false);
+      this.publish();
+      return;
+    }
+    this.savedToken = token;
+    this.endpointCache = trimmed;
+    await preferences.setEndpoint(trimmed);
+    await this.rememberEndpoint(trimmed, true);
+    this.failure = undefined;
+    this.notice = '';
+    this.noticeIsError = false;
+    const deviceId = await preferences.deviceId();
+    // connect() tears the old channels down and opens new ones; there is no need
+    // (and no safe place) for an explicit disconnect in between.
+    this.client.connect({ endpoint: trimmed, deviceId: deviceId, token: token });
+    this.publish();
+  }
+
+  /**
+   * Auto endpoint choice (see sync/Endpoints): the LAN address at home, the
+   * public one elsewhere. Never tears down a live connection — a network move
+   * fails the transport on its own, and the reconnect then re-evaluates here.
+   */
+  private async maybeAutoSelect(): Promise<void> {
+    if (!this.autoSwitch || this.autoSelecting) {
+      return;
+    }
+    const preferences = this.preferences;
+    if (preferences === undefined || this.savedEndpoints.length === 0) {
+      return;
+    }
+    const state = this.client.connectionState;
+    if (state === GatewayConnectionState.CONNECTED || state === GatewayConnectionState.CONNECTING ||
+      state === GatewayConnectionState.AUTHENTICATING) {
+      return;
+    }
+    const preferred = preferredEndpoint(this.savedEndpoints, this.network.hint());
+    if (preferred.length === 0 || preferred === this.endpointCache) {
+      return;
+    }
+    this.autoSelecting = true;
+    try {
+      await this.switchEndpoint(preferred);
+    } finally {
+      this.autoSelecting = false;
+    }
+  }
+
+  /** Turn automatic endpoint selection on/off; turning it on applies it at once. */
+  async setAutoSwitch(value: boolean): Promise<void> {
+    this.autoSwitch = value;
+    const preferences = this.preferences;
+    if (preferences !== undefined) {
+      await preferences.setAutoSwitch(value);
+    }
+    if (value) {
+      await this.maybeAutoSelect();
+    }
+    this.publish();
+  }
+
+  /**
+   * Discover the gateway's LAN listener by probing the current /24 for port
+   * 3081. Only runs where a scan can succeed (a private Wi-Fi/Ethernet source,
+   * which is exactly what the gateway's LAN listener accepts); every hit is
+   * added as a saved LAN address the user can switch to.
+   */
+  async scanLan(): Promise<number> {
+    if (this.scanning) {
+      return 0;
+    }
+    const hint = this.network.hint();
+    if (!hint.available || hint.privateIpv4.length === 0) {
+      this.notice = '当前不在可扫描的局域网内（需要 Wi-Fi 或以太网）';
+      this.noticeIsError = true;
+      this.publish();
+      return 0;
+    }
+    this.scanning = true;
+    this.notice = '正在扫描局域网…';
+    this.noticeIsError = false;
+    this.publish();
+    try {
+      const hosts = subnetProbeHosts(hint.privateIpv4, hint.prefixLength, LAN_SCAN_HOST_LIMIT);
+      const found = await this.lanScanner.scan(hosts, DEFAULT_LAN_PORT, LAN_SCAN_TIMEOUT_MS,
+        (done: number, total: number) => {
+          void done;
+          void total;
+        });
+      for (const host of found) {
+        await this.rememberEndpoint(lanUrlFor(host), true);
+      }
+      this.notice = found.length > 0
+        ? `扫描完成：发现 ${found.length} 个局域网地址`
+        : '扫描完成：没有发现局域网网关（确认 WebUI 已开启局域网监听）';
+      this.noticeIsError = false;
+      return found.length;
+    } catch (error) {
+      this.notice = `扫描失败：${(error as Error).message}`;
+      this.noticeIsError = true;
+      return 0;
+    } finally {
+      this.scanning = false;
+      this.publish();
+    }
+  }
+
   async refreshSettings(): Promise<void> {
     await this.refreshAgentPresets();
     await this.refreshDefaults();
@@ -672,6 +924,17 @@ export class GatewayStore {
     this.savedToken = '';
     if (endpoint.length > 0) {
       await this.tokens.clear(endpoint);
+    }
+    // 解除配对 drops the gateway credential, so every address for it goes too:
+    // keeping them would only offer reconnects that cannot authenticate.
+    for (const saved of this.savedEndpoints) {
+      if (saved.url !== endpoint) {
+        await this.tokens.clear(saved.url);
+      }
+    }
+    this.savedEndpoints = [];
+    if (preferences !== undefined) {
+      await preferences.setEndpointRecordsRaw('');
     }
     this.selectedWorkspaceId = '';
     this.selectedSessionId = '';
@@ -984,7 +1247,9 @@ export class GatewayStore {
    */
   resumeFromBackground(): void {
     this.client.setForeground(true);
-    this.connectSaved().then(async (): Promise<void> => {
+    // Re-evaluate the address before reconnecting so a phone that came back on a
+    // different network connects straight to the listener it can actually reach.
+    this.maybeAutoSelect().then(() => this.connectSaved()).then(async (): Promise<void> => {
       await this.catchUpConversation();
       // The gateway pushes no session-list notification, so a session created
       // or renamed on another client (desktop) only appears when we poll. A
@@ -2079,6 +2344,9 @@ export class GatewayStore {
     this.savedToken = token;
     this.tokens.save(endpoint, token).then(() => {
       this.notice = '配对成功，设备凭据已安全保存';
+      // The freshly paired address joins the saved list (and gets the token copy).
+      return this.rememberEndpoint(endpoint, true);
+    }).then(() => {
       this.publish();
     }).catch((error: Error) => {
       this.notice = `配对成功，但保存凭据失败：${error.message}`;

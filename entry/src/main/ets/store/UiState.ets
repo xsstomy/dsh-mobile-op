@@ -12,6 +12,7 @@ import { TrajectoryRow } from '../projection/Trajectory';
 import { CrumbRow, FileEntryRow, PreviewKind } from '../protocol/Files';
 import { PreparedImageRow } from '../protocol/Images';
 import { QueueRow } from '../protocol/Queue';
+import { SavedEndpoint } from '../sync/Endpoints';
 import { TodoRow } from '../sync/Todos';
 import {
   AgentPresetRow, CommandGroupRow, ModelGroupRow, ModelSelectionRow, PermissionOptionRow
@@ -131,6 +132,12 @@ export interface UiSnapshot {
   connection: GatewayConnectionState;
   connectionDetail: string;
   endpoint: string;
+  /** Every address this gateway is reachable at, newest first. */
+  savedEndpoints: SavedEndpoint[];
+  /** Whether the client may pick a better saved address on its own. */
+  autoSwitch: boolean;
+  /** True while the LAN discovery scan is running. */
+  endpointScanning: boolean;
   capabilities: string[];
   notice: string;
   noticeIsError: boolean;
@@ -207,6 +214,9 @@ export function emptyUiSnapshot(): UiSnapshot {
     connection: GatewayConnectionState.DISCONNECTED,
     connectionDetail: '',
     endpoint: '',
+    savedEndpoints: [],
+    autoSwitch: true,
+    endpointScanning: false,
     capabilities: [],
     notice: '',
     noticeIsError: false,

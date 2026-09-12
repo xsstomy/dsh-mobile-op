@@ -11,6 +11,7 @@ import { GatewayStore } from '../store/GatewayStore';
 import { UI_KEY, UiSnapshot, emptyUiSnapshot } from '../store/UiState';
 import { AppColors, AppFont, AppRadius, AppSpacing, AppShadow, Glass } from '../common/Constants';
 import { HarnessBackground } from '../common/HarnessBackground';
+import { ConnectionPanel } from '../views/ConnectionPanel';
 
 const TAG = 'PairingPage';
 
@@ -249,6 +250,8 @@ struct PairingPage {
             })
         }
         .width('100%')
+
+        ConnectionPanel()
 
         Text(`连接状态：${this.ui.connection} ${this.ui.connectionDetail}`)
           .fontSize(AppFont.CAPTION)

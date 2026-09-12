@@ -16,6 +16,7 @@ import {
   AgentPresetRow, ModelGroupRow, ModelRow, PermissionOptionRow, permissionLabel
 } from '../protocol/Settings';
 import { HarnessBackground } from '../common/HarnessBackground';
+import { ConnectionPanel } from '../views/ConnectionPanel';
 
 @Entry
 @Component
@@ -699,6 +700,8 @@ struct SettingsPage {
             .borderRadius(AppRadius.CARD)
             .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER })
             .backgroundBlurStyle(BlurStyle.COMPONENT_THICK, Glass.blurOptions())
+
+            ConnectionPanel()
 
             if (this.error.length > 0) {
               Text(this.error).fontSize(AppFont.CAPTION).fontColor(AppColors.DANGER).width('100%')
