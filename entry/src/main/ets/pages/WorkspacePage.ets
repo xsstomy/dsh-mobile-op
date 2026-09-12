@@ -335,7 +335,8 @@ struct WorkspacePage {
                   this.error = failure.message;
                 });
               })
-            }, (workspace: WorkspaceRow) => workspace.workspaceId)
+            }, (workspace: WorkspaceRow) =>
+              `${workspace.workspaceId}|${workspace.title}|${workspace.sessionCount}|${workspace.active ? 1 : 0}`)
           }
           .width('100%')
         }
@@ -489,11 +490,18 @@ struct WorkspacePage {
         }
 
         List({ space: 0 }) {
+          // The key must cover every field the row renders. ArkUI reuses an
+          // item whose key is unchanged and never re-runs its builder, so a
+          // sessionId-only key froze each row at its first paint: a freshly
+          // created session kept showing its short id / blank / creation time
+          // even after the title and activity arrived, while the conversation
+          // header (a plain Text) showed the new name.
           ForEach(this.visibleSessions(), (session: SessionRow) => {
             ListItem() {
               this.sessionRow(session)
             }
-          }, (session: SessionRow) => session.sessionId)
+          }, (session: SessionRow) =>
+            `${session.sessionId}|${session.title}|${session.blank ? 1 : 0}|${session.running ? 1 : 0}|${session.updatedAt}`)
         }
         // Bounded by the remaining space (layoutWeight), so a long roster can
         // never push the page; the visible bar matches the workspace dropdown.
