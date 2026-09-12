@@ -1,7 +1,8 @@
 import { describe, expect, it } from '@ohos/hypium';
 import {
-  ChannelLane, LanePolicy, NotConnectedError, RequestBusyError, RequestTracker, buildRequest, isTransportUnavailable,
-  laneForRequest, laneKeyFor, lanePolicyFor, requestTimeoutFor, resolveSettleKey, responseKindFor
+  ChannelLane, LanePolicy, NotConnectedError, RequestBusyError, RequestTracker, buildRequest,
+  fallbackResponseKindFor, isTransportUnavailable, laneForRequest, laneKeyFor, lanePolicyFor, requestTimeoutFor,
+  resolveSettleKey, responseKindFor
 } from '../main/ets/gateway/RequestTracker';
 import { WireFrame } from '../main/ets/protocol/Types';
 import { SESSION_CREATED_FRAME } from './fixtures/Frames';
@@ -236,6 +237,19 @@ export default function requestTrackerTest(): void {
       expect(resolveSettleKey('history', '', '', has, 'session-b')).assertEqual('');
       // A reply without a session id must not borrow the session lane.
       expect(resolveSettleKey('history', '', '', has)).assertEqual('');
+    });
+
+    it('never falls back for a reply that names its exchange (session-bleed)', 0, () => {
+      // A labeled reply belongs to exactly one lane: no global fallback at all.
+      expect(fallbackResponseKindFor('history', '', 'session-a', '')).assertEqual('');
+      expect(fallbackResponseKindFor('history', 'r1', '', '')).assertEqual('');
+      // A session-less error that names a requestType cannot be attributed to a
+      // session, so it must not settle a session-scoped lane either.
+      expect(fallbackResponseKindFor('error', '', '', 'history')).assertEqual('');
+      expect(fallbackResponseKindFor('error', '', '', '')).assertEqual('');
+      // The measured session-less replies keep the oldest-first fallback.
+      expect(fallbackResponseKindFor('models', '', '', '')).assertEqual('models');
+      expect(fallbackResponseKindFor('history', '', '', '')).assertEqual('history');
     });
 
     it('settles the oldest same-kind lane when the reply has no session id', 0, async () => {

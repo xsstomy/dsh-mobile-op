@@ -18,8 +18,8 @@ import { WireFrame } from '../protocol/Types';
 import { decodeFrame } from '../protocol/WireDecoder';
 import { MessagePayload, SessionCreatePayload, TypePayload } from '../protocol/Payloads';
 import {
-  ChannelLane, GatewayRequest, NotConnectedError, RequestTracker, buildRequest, resolveSettleKey,
-  responseKindFor
+  ChannelLane, GatewayRequest, NotConnectedError, RequestTracker, buildRequest, fallbackResponseKindFor,
+  resolveSettleKey
 } from './RequestTracker';
 
 export enum GatewayConnectionState {
@@ -560,7 +560,10 @@ export class GatewayClient {
     // Session-scoped replies that echo neither a correlation id nor a session id
     // (measured: models and permission-options) still have a lane waiting; settle
     // the oldest one of that kind so two sessions can never share one answer.
-    const fallbackKind = kind === 'error' ? responseKindFor(requestType) : kind;
+    // A reply that names its exchange is bound to that one lane and is never
+    // handed to another session's lane (see `fallbackResponseKindFor`): that is
+    // how a brand-new session used to adopt the previous session's transcript.
+    const fallbackKind = fallbackResponseKindFor(kind, correlation, sessionId, requestType);
     if (fallbackKind.length > 0) {
       const settled = this.tracker.settleAny(fallbackKind, frame);
       if (settled.length > 0) {
@@ -568,6 +571,12 @@ export class GatewayClient {
         void raw;
         return true;
       }
+    }
+    if (kind === 'history') {
+      // Field diagnosis for the session-bleed class: an unattributable history
+      // reply stays on the broadcast path instead of being steered elsewhere.
+      hilog.warn(0x0000, 'GatewayClient',
+        'history reply without a matching lane (session=%{public}s requestType=%{public}s)', sessionId, requestType);
     }
     return false;
   }

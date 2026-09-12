@@ -24,7 +24,7 @@ import { fetchDeepSeekBalance } from '../auth/DeepSeekBalance';
 import { formatBalance, parseBalanceSnapshot } from '../protocol/Balance';
 import { WireFrame, WireQueueItem, WireSessionEvent, WireSessionSummary, WireWorkspace } from '../protocol/Types';
 import { asQueueItems, asSessionEvents, asSessionSummaries, asWorkspaces } from '../protocol/WireDecoder';
-import { mergeHistoryPage, mergeLiveEvent, titleOf } from '../sync/History';
+import { frameTargetsSession, mergeHistoryPage, mergeLiveEvent, titleOf } from '../sync/History';
 import { ConversationItem, applyEvent, projectFromEvents } from '../projection/Conversation';
 import { TurnActivityState, applyTurnActivity, turnIdle, turnRunning } from '../projection/TurnActivity';
 import { GatewayPairingPayload, parsePairingPayload } from '../protocol/PairingPayload';
@@ -1654,6 +1654,14 @@ export class GatewayStore {
     this.publish();
     try {
       const frame = await this.client.request('history', new TrajectoryPayload(sessionId, 300, 8 * 1024 * 1024));
+      // A page that names another session is not this session's trajectory.
+      if (!frameTargetsSession(frame, sessionId)) {
+        hilog.warn(0x0000, 'GatewayStore', 'dropped trajectory page for %{public}s: frame names %{public}s',
+          sessionId, typeof frame.sessionId === 'string' ? frame.sessionId : '');
+        this.trajectoryLoading = false;
+        this.publish();
+        return;
+      }
       // A late page from a previous session must not overwrite the open one.
       if (this.selectedSessionId !== sessionId) {
         return;
@@ -2280,6 +2288,14 @@ export class GatewayStore {
   async loadHistory(sessionId: string, beforeSeq?: number): Promise<void> {
     const maxMessages = beforeSeq === undefined ? INITIAL_HISTORY_MESSAGES : HISTORY_PAGE_MESSAGES;
     const frame = await this.client.request('history', new HistoryPayload(sessionId, beforeSeq, maxMessages));
+    // A page that names another session is not this session's history: adopting it
+    // would import that conversation's title, transcript and cache (the session
+    // bleed a freshly created session used to exhibit).
+    if (!frameTargetsSession(frame, sessionId)) {
+      hilog.warn(0x0000, 'GatewayStore', 'dropped history page for %{public}s: frame names %{public}s',
+        sessionId, typeof frame.sessionId === 'string' ? frame.sessionId : '');
+      return;
+    }
     // The user may switch sessions while this page is in flight. Everything below
     // merges into `this.history` / `this.conversation`, which by then belong to
     // the *newly* selected session — applying a stale page would splice the

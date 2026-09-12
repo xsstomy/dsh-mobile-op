@@ -7,7 +7,7 @@
  *  - `session/title` changes arrive both as a live event and as the
  *    `session-title-changed` push: handling must stay idempotent
  */
-import { WireSessionEvent } from '../protocol/Types';
+import { WireFrame, WireSessionEvent } from '../protocol/Types';
 
 export interface HistoryPage {
   events: WireSessionEvent[];
@@ -31,6 +31,17 @@ export interface MergeOutcome {
 
 function seqOf(event: WireSessionEvent): number {
   return typeof event.seq === 'number' ? event.seq : -1;
+}
+
+/**
+ * A session-scoped reply belongs to `sessionId` unless it names a different
+ * session. A frame that declares no session (legacy gateway) cannot be checked
+ * and is accepted; a frame that names another session must never be adopted, or
+ * the open conversation would import that session's title and transcript.
+ */
+export function frameTargetsSession(frame: WireFrame, sessionId: string): boolean {
+  const named = typeof frame.sessionId === 'string' ? frame.sessionId : '';
+  return named.length === 0 || named === sessionId;
 }
 
 function headerValueOf(event: WireSessionEvent): string {

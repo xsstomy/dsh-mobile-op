@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { mergeHistoryPage, mergeLiveEvent, normalizeEvents, titleOf } from '../main/ets/sync/History';
-import { WireSessionEvent } from '../main/ets/protocol/Types';
+import { frameTargetsSession, mergeHistoryPage, mergeLiveEvent, normalizeEvents, titleOf } from '../main/ets/sync/History';
+import { WireFrame, WireSessionEvent } from '../main/ets/protocol/Types';
 import { HISTORY_FRAME, SESSION_TITLE_CHANGED_FRAME } from './fixtures/Frames';
 import { asSessionEvents, decodeFrame } from '../main/ets/protocol/WireDecoder';
 import { emptyEvent, titleEvent } from './TestHelpers';
@@ -52,6 +52,14 @@ export default function historyTest(): void {
       expect(outcome.prepended).assertFalse();
       expect(outcome.events.length).assertEqual(3);
       expect(outcome.events[2].seq).assertEqual(12);
+    });
+
+    it('rejects a history frame that names a different session', 0, () => {
+      const named = decodeFrame('{"kind":"history","sessionId":"session-b"}') as WireFrame;
+      const anonymous = decodeFrame('{"kind":"history"}') as WireFrame;
+      expect(frameTargetsSession(named, 'session-a')).assertFalse();
+      expect(frameTargetsSession(named, 'session-b')).assertTrue();
+      expect(frameTargetsSession(anonymous, 'session-a')).assertTrue();
     });
 
     it('merges a page that only fills the gap before the live tail', 0, () => {

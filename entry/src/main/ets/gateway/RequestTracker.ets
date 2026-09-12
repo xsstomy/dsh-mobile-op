@@ -243,6 +243,31 @@ export function resolveSettleKey(kind: string, requestType: string, correlation:
   return hasFlight('sent') ? 'sent' : '';
 }
 
+/**
+ * Response kind an unlabeled reply may settle, or '' when the reply must not be
+ * handed to any lane at all.
+ *
+ * A reply that names its exchange (correlation id or session id) belongs to
+ * exactly one lane. Steering such a reply into another session's lane is how a
+ * brand-new session used to adopt the previously open session's title and
+ * transcript: the lane key is `history@<sessionId>`, so a global "oldest of
+ * this kind" fallback must never be applied to it.
+ */
+export function fallbackResponseKindFor(
+  kind: string, correlation: string, sessionId: string, requestType: string
+): string {
+  if (correlation.length > 0 || sessionId.length > 0) {
+    return '';
+  }
+  if (kind === 'error' && requestType.length > 0) {
+    // Gateway error frames name a requestType but carry no sessionId (measured
+    // for tasks/goal/session-stats failures). Such a frame cannot be attributed
+    // to one session, so no session-scoped lane may be settled from it.
+    return '';
+  }
+  return kind === 'error' ? responseKindFor(requestType) : kind;
+}
+
 export class RequestTracker {
   private readonly flights: Map<string, Flight> = new Map<string, Flight>();
   private tokenSeq: number = 0;
@@ -319,6 +344,9 @@ export class RequestTracker {
    * permission-options do not echo sessionId), so two sessions can never share
    * one answer. Flights are stored in registration order; the gateway answers
    * a single socket in order, so oldest-first matches request order.
+   *
+   * Callers must gate eligibility with `fallbackResponseKindFor` first: a reply
+   * that names its exchange belongs to one lane and must never land in another.
    */
   settleAny(responseKind: string, frame: WireFrame): string {
     let target = '';
