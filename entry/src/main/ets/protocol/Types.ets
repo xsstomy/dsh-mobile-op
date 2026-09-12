@@ -223,6 +223,10 @@ export interface WireEventPayload {
   finish?: Object;
   callId?: string;
   name?: string;
+  /** `command/run` / `command/done`: the host command correlation id. */
+  commandId?: string;
+  /** `command/done`: `success` | `error`. */
+  outcome?: string;
   arguments?: Object;
   isError?: boolean;
   preview?: string;

@@ -120,6 +120,8 @@ export class GatewayLimits {
   static readonly MAX_IMAGES_PER_MESSAGE: number = 8;
   static readonly REQUEST_TIMEOUT_MS: number = 30000;
   static readonly SESSION_CREATE_TIMEOUT_MS: number = 45000;
+  /** Long commands (e.g. /plan-review) run a review subagent; do not cut them at 30s. */
+  static readonly COMMAND_TIMEOUT_MS: number = 900000;
   static readonly PING_INTERVAL_MS: number = 25000;
   static readonly CONNECT_TIMEOUT_MS: number = 12000;
 }

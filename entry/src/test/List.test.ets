@@ -8,6 +8,7 @@ import historyTest from './History.test';
 import imagesTest from './Images.test';
 import mentionsTest from './Mentions.test';
 import pairingTest from './PairingPayload.test';
+import planModeTest from './PlanMode.test';
 import protocolTest from './Protocol.test';
 import questionsTest from './Questions.test';
 import queueTest from './Queue.test';
@@ -42,4 +43,5 @@ export default function testsuite(): void {
   gatewayFramesTest();
   balanceTest();
   endpointsTest();
+  planModeTest();
 }

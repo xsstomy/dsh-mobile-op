@@ -166,7 +166,15 @@ export function responseKindFor(type: string): string {
 }
 
 export function requestTimeoutFor(type: string): number {
-  return type === 'session-create' ? GatewayLimits.SESSION_CREATE_TIMEOUT_MS : GatewayLimits.REQUEST_TIMEOUT_MS;
+  if (type === 'session-create') {
+    return GatewayLimits.SESSION_CREATE_TIMEOUT_MS;
+  }
+  // /plan-review runs a review subagent and can take minutes; a 30s cut would
+  // drop the eventual `command-executed` as a late response.
+  if (type === 'command-execute') {
+    return GatewayLimits.COMMAND_TIMEOUT_MS;
+  }
+  return GatewayLimits.REQUEST_TIMEOUT_MS;
 }
 
 /** The `sessionId` a payload targets, or '' for a global request. */

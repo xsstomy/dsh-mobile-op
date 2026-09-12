@@ -13,6 +13,7 @@ import { CrumbRow, FileEntryRow, PreviewKind } from '../protocol/Files';
 import { PreparedImageRow } from '../protocol/Images';
 import { QueueRow } from '../protocol/Queue';
 import { SavedEndpoint } from '../sync/Endpoints';
+import { PlanModeRow } from '../sync/PlanMode';
 import { TodoRow } from '../sync/Todos';
 import {
   AgentPresetRow, CommandGroupRow, ModelGroupRow, ModelSelectionRow, PermissionOptionRow
@@ -140,6 +141,14 @@ export interface UiSnapshot {
   endpointScanning: boolean;
   /** False when the device currently has no usable default network. */
   networkAvailable: boolean;
+  /** Host `plan` projection for the active session (null when unpublished). */
+  plan: PlanModeRow | null;
+  /** `plan-toggle` when the plugin is installed, else `plan`; '' hides the control. */
+  planToggleCommand: string;
+  /** True when the host catalog has the plugin's /plan-review command. */
+  planReviewAvailable: boolean;
+  /** True while the /plan-review pipeline is running. */
+  planReviewRunning: boolean;
   capabilities: string[];
   notice: string;
   noticeIsError: boolean;
@@ -220,6 +229,10 @@ export function emptyUiSnapshot(): UiSnapshot {
     autoSwitch: true,
     endpointScanning: false,
     networkAvailable: true,
+    plan: null,
+    planToggleCommand: '',
+    planReviewAvailable: false,
+    planReviewRunning: false,
     capabilities: [],
     notice: '',
     noticeIsError: false,

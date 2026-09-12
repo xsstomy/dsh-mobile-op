@@ -59,6 +59,7 @@ import {
   removeSavedEndpoint, serializeSavedEndpoints, subnetProbeHosts, upsertSavedEndpoint
 } from '../sync/Endpoints';
 import { LanScanner } from '../gateway/LanScanner';
+import { PlanModeRow, hasHostCommand, planModeOf, planTarget, planToggleCommand } from '../sync/PlanMode';
 import {
   ApprovalResponsePayload, CommandExecutePayload, DirectoryCreatePayload, DirectoryListPayload, CommandQueryPayload, CommandSelectPayload, CommandsQueryPayload,
   GoalMutationPayload, GoalRef, HistoryPayload, MessagePayload, PermissionPayload, QuestionAnswerItem,
@@ -101,6 +102,22 @@ function sessionPresetOf(session: WireSessionSummary): string {
   }
   const preset = (values as Record<string, Object>)['agentPreset'];
   return typeof preset === 'string' ? preset : '';
+}
+
+/** Command name of a slash line ('' when it is not slash-prefixed). */
+function commandNameOf(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('/')) {
+    return '';
+  }
+  const rest = trimmed.substring(1);
+  const space = rest.indexOf(' ');
+  return space < 0 ? rest : rest.substring(0, space);
+}
+
+/** Commands whose result can change the host plan projection. */
+function isPlanFamilyCommand(name: string): boolean {
+  return name === 'plan' || name === 'plan-toggle' || name === 'plan-review';
 }
 
 export interface StatusLine {
@@ -294,6 +311,16 @@ export class GatewayStore {
   private scanning: boolean = false;
   /** Latest default-network availability, surfaced so the UI can say 无网络. */
   private networkAvailable: boolean = true;
+  /** Host plan projection for the selected session (null = unpublished). */
+  private plan: PlanModeRow | null = null;
+  /** asOfSeq of the applied plan projection; an older snapshot is ignored. */
+  private planSeq: number = -1;
+  /** /plan-review pipeline progress (driven by command/run + command/done). */
+  private planReviewRunning: boolean = false;
+  private planReviewCommandId: string = '';
+  /** Latest issued command, used to label the result text. */
+  private recentCommandName: string = '';
+  private recentCommandLine: string = '';
 
   static get current(): GatewayStore {
     if (GatewayStore.instance === undefined) {
@@ -450,6 +477,10 @@ export class GatewayStore {
     snapshot.autoSwitch = this.autoSwitch;
     snapshot.endpointScanning = this.scanning;
     snapshot.networkAvailable = this.networkAvailable;
+    snapshot.plan = this.plan;
+    snapshot.planToggleCommand = planToggleCommand(this.commandGroups);
+    snapshot.planReviewAvailable = hasHostCommand(this.commandGroups, 'plan-review');
+    snapshot.planReviewRunning = this.planReviewRunning;
     snapshot.capabilities = this.status.capabilities;
     snapshot.notice = this.notice;
     snapshot.noticeIsError = this.noticeIsError;
@@ -962,6 +993,7 @@ export class GatewayStore {
     this.history = [];
     this.conversation = [];
     this.clearHistoryCache();
+    this.resetPlan();
     this.publish();
   }
 
@@ -1084,6 +1116,7 @@ export class GatewayStore {
       this.sessions = mergeSessionRows(this.sessions, incoming);
       applySummaryTitles(this.sessionTitles, this.sessions);
       this.syncTurnActivityFromHost();
+      this.applyPlanFromRoster();
       this.publish();
     });
   }
@@ -1191,6 +1224,7 @@ export class GatewayStore {
     this.currentPermission = '';
     this.commandGroups = [];
     this.commandOutcome = null;
+    this.resetPlan();
   }
 
   /**
@@ -1446,6 +1480,7 @@ export class GatewayStore {
       return;
     }
     this.commandOutcome = null;
+    this.rememberCommand(line);
     try {
       const frame = await this.client.request('command-execute',
         new CommandExecutePayload(sessionId, line));
@@ -1465,6 +1500,84 @@ export class GatewayStore {
       this.commandOutcome = { line: line, kind: 'error', text: (failure as Error).message };
     }
     this.publish();
+    this.afterCommand();
+  }
+
+  /** Apply the host plan projection with an asOfSeq guard (older loses). */
+  private applyPlan(projections: Object | undefined): void {
+    const plan = planModeOf(projections);
+    if (plan === null) {
+      return;
+    }
+    const seq = projectionsSeqOf(projections);
+    if (seq < this.planSeq) {
+      return;
+    }
+    this.plan = plan;
+    this.planSeq = seq;
+  }
+
+  /** Drop per-session plan state (session switch / unpair). */
+  private resetPlan(): void {
+    this.plan = null;
+    this.planSeq = -1;
+    this.planReviewRunning = false;
+    this.planReviewCommandId = '';
+    this.recentCommandName = '';
+    this.recentCommandLine = '';
+  }
+
+  /** The selected session's roster summary carries its own projection hints. */
+  private applyPlanFromRoster(): void {
+    for (const session of this.sessions) {
+      if ((session.sessionId ?? '') === this.selectedSessionId) {
+        this.applyPlan(session.projections);
+        return;
+      }
+    }
+  }
+
+  private rememberCommand(line: string): void {
+    this.recentCommandLine = line;
+    this.recentCommandName = commandNameOf(line);
+  }
+
+  /** The host pushes no projection change: re-read the roster after plan commands. */
+  private afterCommand(): void {
+    if (isPlanFamilyCommand(this.recentCommandName)) {
+      void this.refreshSessions();
+    }
+  }
+
+  /**
+   * Enter/leave plan mode. The plugin's /plan-toggle is preferred because its
+   * review pipeline gates on the mode that command writes; the official
+   * /plan and /plan off are the fallback when the plugin is absent.
+   */
+  async togglePlanMode(): Promise<void> {
+    const command = planToggleCommand(this.commandGroups);
+    if (command.length === 0) {
+      return;
+    }
+    const line = command === 'plan-toggle'
+      ? '/plan-toggle'
+      : (planTarget(this.plan) ? '/plan off' : '/plan');
+    await this.executeCommand(line);
+  }
+
+  /** Run the plugin's review - archive - auto-execute pipeline. */
+  async runPlanReview(): Promise<void> {
+    if (this.planReviewRunning || !hasHostCommand(this.commandGroups, 'plan-review')) {
+      return;
+    }
+    this.planReviewRunning = true;
+    this.publish();
+    try {
+      await this.executeCommand('/plan-review');
+    } finally {
+      this.planReviewRunning = false;
+      this.publish();
+    }
   }
 
   async loadCommandOptions(command: string): Promise<void> {
@@ -2152,6 +2265,7 @@ export class GatewayStore {
     // opening a session names it immediately — even before any live event or
     // `sessions` refresh — while the seq guard rejects an older name.
     this.setSessionTitle(sessionId, projectedTitleOf(frame.projections), projectionsSeqOf(frame.projections));
+    this.applyPlan(frame.projections);
     const page = asSessionEvents(frame);
     const outcome = mergeHistoryPage(this.history, page);
     this.history = outcome.events;
@@ -2411,6 +2525,31 @@ export class GatewayStore {
       }
       if ((event.type ?? '') === 'session/title') {
         this.setSessionTitle(sessionId, titleOf(wireEvent), seq);
+      }
+      const eventType = event.type ?? '';
+      if (eventType === 'command/run') {
+        const commandName = typeof event.name === 'string' ? event.name : '';
+        this.recentCommandName = commandName;
+        if (commandName === 'plan-review') {
+          this.planReviewRunning = true;
+          this.planReviewCommandId = typeof event.commandId === 'string' ? event.commandId : '';
+        }
+      } else if (eventType === 'command/done') {
+        const commandId = typeof event.commandId === 'string' ? event.commandId : '';
+        if (commandId.length > 0 && commandId === this.planReviewCommandId) {
+          this.planReviewRunning = false;
+          this.planReviewCommandId = '';
+          if (sessionId === this.selectedSessionId) {
+            this.commandOutcome = {
+              line: this.recentCommandLine,
+              kind: typeof event.outcome === 'string' ? event.outcome : 'success',
+              text: typeof event.text === 'string' ? event.text : ''
+            };
+          }
+        }
+        if (isPlanFamilyCommand(this.recentCommandName)) {
+          void this.refreshSessions();
+        }
       }
       // Fold the event into the roster row so the home list reflects activity
       // without waiting for the next `sessions` round trip.

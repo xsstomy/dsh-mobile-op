@@ -31,6 +31,7 @@ import { copyToClipboard, vibrateShort } from '../common/Platform';
 import { turnFooterText } from '../common/Format';
 import { FileEntryRow } from '../protocol/Files';
 import { isOfficialDeepSeekRoute } from '../protocol/Balance';
+import { planTarget } from '../sync/PlanMode';
 import {
   ActiveAtToken, activeAtTokenInDraft, applyMention, filterMentionEntries, formatFileMention, mentionTargetOf
 } from '../protocol/Mentions';
@@ -1063,6 +1064,12 @@ struct ConversationPage {
         this.menuAction('任务与目标', false, () => {
           this.openSheet('panel');
         })
+        if (this.ui.planReviewAvailable && this.planChipOn()) {
+          this.menuAction('复核并执行（plan-review）', false, () => {
+            this.sheetOpen = false;
+            this.store.runPlanReview();
+          })
+        }
         this.menuAction('工作区文件', false, () => {
           this.sheetOpen = false;
           router.pushUrl({ url: 'pages/WorkspaceFilesPage' });
@@ -1439,6 +1446,40 @@ struct ConversationPage {
     }
   }
 
+  /** Effective plan-mode target from the host projection (false when unknown). */
+  private planChipOn(): boolean {
+    return planTarget(this.ui.plan);
+  }
+
+  private planChipLabel(): string {
+    if (this.ui.plan !== null && this.ui.plan.pending) {
+      return 'Plan…';
+    }
+    return 'Plan';
+  }
+
+  /** Plan-mode chip: reads the host projection, toggles through the host command. */
+  @Builder
+  planChip() {
+    if (this.ui.planToggleCommand.length > 0 && this.ui.plan !== null) {
+      Text(this.planChipLabel())
+        .id('planChipButton')
+        .fontSize(AppFont.CAPTION)
+        .fontColor(this.planChipOn() ? AppColors.PAPER : AppColors.DARK_INK)
+        .textAlign(TextAlign.Center)
+        .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+        .backgroundColor(this.planChipOn() ? AppColors.BRAND : Glass.FILL_STRONG)
+        .borderRadius(AppRadius.PILL)
+        .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+        .opacity(this.ui.planReviewRunning ? 0.5 : 1)
+        .onClick(() => {
+          if (!this.ui.planReviewRunning && !this.ui.busy) {
+            this.store.togglePlanMode();
+          }
+        })
+    }
+  }
+
   @Builder
   composer() {
     Column({ space: 10 }) {
@@ -1476,16 +1517,31 @@ struct ConversationPage {
       if (this.mentionOpen) {
         this.mentionMenu()
       }
+      if (this.ui.planReviewRunning) {
+        Text('复核中：只读复核 → 归档 → 执行')
+          .fontSize(10)
+          .fontColor(AppColors.WARN)
+          .width('100%')
+      }
       if (this.ui.commandOutcome !== null) {
-        Row() {
+        Column({ space: 2 }) {
           Text(this.ui.commandOutcome?.kind === 'error' ? '命令失败' : '命令完成')
             .fontSize(10)
             .fontColor(this.ui.commandOutcome?.kind === 'error' ? AppColors.DANGER : AppColors.OK)
-            .onClick(() => {
-              this.store.clearCommandOutcome();
-            })
+          if ((this.ui.commandOutcome?.text ?? '').length > 0) {
+            Text(this.ui.commandOutcome?.text ?? '')
+              .fontSize(10)
+              .fontColor(AppColors.INK_WEAK)
+              .width('100%')
+              .maxLines(3)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
+        .alignItems(HorizontalAlign.Start)
         .width('100%')
+        .onClick(() => {
+          this.store.clearCommandOutcome();
+        })
       }
 
       if (this.ui.preparedImages.length > 0) {
@@ -1543,6 +1599,7 @@ struct ConversationPage {
         // Model / effort / permission are set once and rarely touched, so the
         // three of them live behind one gear button on the composer action row.
         this.settingsButton()
+        this.planChip()
         // Quick-insert shortcuts: tapping `/` or `@` splices the symbol at the
         // caret and opens the same command / file menus the keyboard would.
         Text('/')
