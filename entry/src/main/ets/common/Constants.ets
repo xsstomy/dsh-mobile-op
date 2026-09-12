@@ -87,6 +87,8 @@ export class AppFont {
   static readonly LABEL: number = 14;
   static readonly CAPTION: number = 12;
   static readonly MONO: number = 13.5;
+  /** Compact label inside a 34vp circle (Plan / review chips). */
+  static readonly BADGE: number = 11;
 }
 
 export class AppRadius {

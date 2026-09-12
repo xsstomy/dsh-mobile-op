@@ -1467,21 +1467,25 @@ struct ConversationPage {
   @Builder
   planChip() {
     if (this.ui.planToggleCommand.length > 0 && this.ui.plan !== null) {
-      Text(this.planChipLabel())
-        .id('planChipButton')
-        .fontSize(AppFont.CAPTION)
-        .fontColor(this.planChipOn() ? AppColors.PAPER : AppColors.DARK_INK)
-        .textAlign(TextAlign.Center)
-        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-        .backgroundColor(this.planChipOn() ? AppColors.BRAND : Glass.FILL_STRONG)
-        .borderRadius(AppRadius.PILL)
-        .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-        .opacity(this.ui.planReviewRunning ? 0.5 : 1)
-        .onClick(() => {
-          if (!this.ui.planReviewRunning && !this.ui.busy) {
-            this.store.togglePlanMode();
-          }
-        })
+      Stack() {
+        Text(this.planChipLabel())
+          .fontSize(AppFont.BADGE)
+          .fontColor(this.planChipOn() ? AppColors.PAPER : AppColors.DARK_INK)
+          .maxLines(1)
+          .textAlign(TextAlign.Center)
+      }
+      .id('planChipButton')
+      .width(34)
+      .height(34)
+      .borderRadius(AppRadius.CIRCLE)
+      .backgroundColor(this.planChipOn() ? AppColors.BRAND : Glass.FILL_STRONG)
+      .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+      .opacity(this.ui.planReviewRunning ? 0.5 : 1)
+      .onClick(() => {
+        if (!this.ui.planReviewRunning && !this.ui.busy) {
+          this.store.togglePlanMode();
+        }
+      })
     }
   }
 
@@ -1494,21 +1498,25 @@ struct ConversationPage {
   @Builder
   planReviewButton() {
     if (this.planChipOn() && this.ui.planReviewAvailable) {
-      Text(this.ui.planReviewRunning ? '复核中' : '复核')
-        .id('planReviewButton')
-        .fontSize(AppFont.CAPTION)
-        .fontColor(AppColors.DARK_INK)
-        .textAlign(TextAlign.Center)
-        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
-        .backgroundColor(Glass.FILL_STRONG)
-        .borderRadius(AppRadius.PILL)
-        .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-        .opacity(this.planReviewActionable() ? 1 : 0.4)
-        .onClick(() => {
-          if (this.planReviewActionable()) {
-            this.store.runPlanReview();
-          }
-        })
+      Stack() {
+        Text('复核')
+          .fontSize(AppFont.BADGE)
+          .fontColor(AppColors.DARK_INK)
+          .maxLines(1)
+          .textAlign(TextAlign.Center)
+      }
+      .id('planReviewButton')
+      .width(34)
+      .height(34)
+      .borderRadius(AppRadius.CIRCLE)
+      .backgroundColor(Glass.FILL_STRONG)
+      .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+      .opacity(this.planReviewActionable() ? 1 : 0.4)
+      .onClick(() => {
+        if (this.planReviewActionable()) {
+          this.store.runPlanReview();
+        }
+      })
     }
   }
 
@@ -1628,7 +1636,7 @@ struct ConversationPage {
 
       this.balanceLine()
 
-      Row({ space: 8 }) {
+      Row({ space: 10 }) {
         Stack() {
           SymbolGlyph($r('sys.symbol.ohos_photo')).fontSize(16).fontColor([AppColors.DARK_INK])
         }

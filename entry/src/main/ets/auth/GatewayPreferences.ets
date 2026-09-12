@@ -160,11 +160,11 @@ export class GatewayPreferences {
   }
 
   /**
-   * Whether the composer shows its quick-insert buttons. Both default ON so an
-   * existing install keeps the buttons it already had.
+   * Whether the composer shows its quick-insert buttons. Both default OFF: the
+   * composer stays uncluttered until the user opts in from the gear panel.
    */
   async showSlashShortcut(): Promise<boolean> {
-    return (await this.getString(KEY_SHOW_SLASH_SHORTCUT, '1')) === '1';
+    return (await this.getString(KEY_SHOW_SLASH_SHORTCUT, '0')) === '1';
   }
 
   async setShowSlashShortcut(value: boolean): Promise<void> {
@@ -172,7 +172,7 @@ export class GatewayPreferences {
   }
 
   async showMentionShortcut(): Promise<boolean> {
-    return (await this.getString(KEY_SHOW_MENTION_SHORTCUT, '1')) === '1';
+    return (await this.getString(KEY_SHOW_MENTION_SHORTCUT, '0')) === '1';
   }
 
   async setShowMentionShortcut(value: boolean): Promise<void> {

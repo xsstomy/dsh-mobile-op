@@ -321,9 +321,9 @@ export class GatewayStore {
   /** Latest issued command, used to label the result text. */
   private recentCommandName: string = '';
   private recentCommandLine: string = '';
-  /** Composer quick-insert visibility (device-local, default on). */
-  private showSlashShortcut: boolean = true;
-  private showMentionShortcut: boolean = true;
+  /** Composer quick-insert visibility (device-local, default off). */
+  private showSlashShortcut: boolean = false;
+  private showMentionShortcut: boolean = false;
 
   static get current(): GatewayStore {
     if (GatewayStore.instance === undefined) {

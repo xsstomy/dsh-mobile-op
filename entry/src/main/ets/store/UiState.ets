@@ -289,8 +289,8 @@ export function emptyUiSnapshot(): UiSnapshot {
     searchError: '',
     themeMode: 'system',
     showReasoning: false,
-    showSlashShortcut: true,
-    showMentionShortcut: true,
+    showSlashShortcut: false,
+    showMentionShortcut: false,
     turnActive: false,
     turnStartedAt: 0,
     backgroundTaskActive: false
