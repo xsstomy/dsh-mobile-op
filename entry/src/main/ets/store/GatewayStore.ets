@@ -1545,7 +1545,12 @@ export class GatewayStore {
   /** The host pushes no projection change: re-read the roster after plan commands. */
   private afterCommand(): void {
     if (isPlanFamilyCommand(this.recentCommandName)) {
+      // Plan mode also flips the session's sandbox/permission preset (the
+      // plugin's hard gate writes it through official permission-presets), and
+      // the host pushes neither projection. Re-read both so the plan chip and
+      // the permission picker stay truthful.
       void this.refreshSessions();
+      void this.refreshPermissions(this.selectedSessionId);
     }
   }
 
@@ -2549,6 +2554,7 @@ export class GatewayStore {
         }
         if (isPlanFamilyCommand(this.recentCommandName)) {
           void this.refreshSessions();
+          void this.refreshPermissions(sessionId);
         }
       }
       // Fold the event into the roster row so the home list reflects activity
