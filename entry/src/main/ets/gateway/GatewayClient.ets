@@ -17,7 +17,8 @@ import { WireFrame } from '../protocol/Types';
 import { decodeFrame } from '../protocol/WireDecoder';
 import { MessagePayload, SessionCreatePayload, TypePayload } from '../protocol/Payloads';
 import {
-  ChannelLane, GatewayRequest, NotConnectedError, RequestTracker, buildRequest, resolveSettleKey
+  ChannelLane, GatewayRequest, NotConnectedError, RequestTracker, buildRequest, resolveSettleKey,
+  responseKindFor
 } from './RequestTracker';
 
 export enum GatewayConnectionState {
@@ -495,15 +496,28 @@ export class GatewayClient {
   private settleIfPending(kind: string, frame: WireFrame, raw: string): boolean {
     const correlation = correlationOf(frame) ?? '';
     const requestType = typeof frame.requestType === 'string' ? frame.requestType : '';
+    const sessionId = typeof frame.sessionId === 'string' ? frame.sessionId : '';
     const key = resolveSettleKey(kind, requestType, correlation,
-      (candidate: string) => this.tracker.hasFlight(candidate));
-    if (key.length === 0) {
-      return false;
+      (candidate: string) => this.tracker.hasFlight(candidate), sessionId);
+    if (key.length > 0) {
+      this.clearTimeoutFor(key);
+      this.tracker.settle(key, frame);
+      void raw;
+      return true;
     }
-    this.clearTimeoutFor(key);
-    this.tracker.settle(key, frame);
-    void raw;
-    return true;
+    // Session-scoped replies that echo neither a correlation id nor a session id
+    // (measured: models and permission-options) still have a lane waiting; settle
+    // the oldest one of that kind so two sessions can never share one answer.
+    const fallbackKind = kind === 'error' ? responseKindFor(requestType) : kind;
+    if (fallbackKind.length > 0) {
+      const settled = this.tracker.settleAny(fallbackKind, frame);
+      if (settled.length > 0) {
+        this.clearTimeoutFor(settled);
+        void raw;
+        return true;
+      }
+    }
+    return false;
   }
 
   private clearTimeoutFor(key: string): void {

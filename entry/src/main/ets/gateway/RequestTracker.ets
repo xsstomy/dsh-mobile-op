@@ -35,6 +35,12 @@ export interface GatewayRequest {
   readonly lanePolicy: LanePolicy;
   readonly payload: string;
   readonly timeoutMs: number;
+  /**
+   * Session a query targets. It is part of the lane key, so two conversations
+   * can never share one coalesced answer: a session-scoped read such as
+   * history/tasks/models carries no per-request id, so without this the second
+   * session joins the first request in flight and receives its answer.
+   */
   readonly targetSessionId?: string;
 }
 
@@ -73,12 +79,20 @@ interface Flight {
   readonly token: number;
   readonly policy: LanePolicy;
   readonly type: string;
+  /** Expected response kind, so an uncorrelated reply can still find its lane. */
+  readonly responseKind: string;
   readonly waiters: Waiter[];
 }
 
-export function laneKeyFor(type: string, responseKind: string, correlationId?: string): string {
+export function laneKeyFor(type: string, responseKind: string, correlationId?: string,
+  targetSessionId?: string): string {
   if (correlationId !== undefined && correlationId.length > 0) {
     return `${responseKind}#${correlationId}`;
+  }
+  if (targetSessionId !== undefined && targetSessionId.length > 0) {
+    // Session-scoped queries carry no per-request id, so the session keeps two
+    // conversations from sharing one coalesced flight (session-bleed fix).
+    return `${responseKind}@${targetSessionId}`;
   }
   return responseKind;
 }
@@ -155,16 +169,25 @@ export function requestTimeoutFor(type: string): number {
   return type === 'session-create' ? GatewayLimits.SESSION_CREATE_TIMEOUT_MS : GatewayLimits.REQUEST_TIMEOUT_MS;
 }
 
+/** The `sessionId` a payload targets, or '' for a global request. */
+function sessionIdOf(payload: Object): string {
+  const value = (payload as Record<string, Object>)['sessionId'];
+  return typeof value === 'string' ? value : '';
+}
+
 export function buildRequest(type: string, payload: Object, correlationId?: string): GatewayRequest {
   const responseKind = responseKindFor(type);
+  const targetSessionId = sessionIdOf(payload);
+  const session = targetSessionId.length > 0 ? targetSessionId : undefined;
   return {
     type: type,
-    key: laneKeyFor(type, responseKind, correlationId),
+    key: laneKeyFor(type, responseKind, correlationId, session),
     responseKind: responseKind,
     lane: laneForRequest(type),
     lanePolicy: lanePolicyFor(type),
     payload: JSON.stringify(payload),
-    timeoutMs: requestTimeoutFor(type)
+    timeoutMs: requestTimeoutFor(type),
+    targetSessionId: session
   };
 }
 
@@ -176,17 +199,37 @@ export function buildRequest(type: string, payload: Object, correlationId?: stri
  * lane instead of being broadcast and left to time out.
  */
 export function resolveSettleKey(kind: string, requestType: string, correlation: string,
-  hasFlight: (key: string) => boolean): string {
-  const direct = laneKeyFor(kind, kind, correlation.length > 0 ? correlation : undefined);
+  hasFlight: (key: string) => boolean, sessionId?: string): string {
+  const session = sessionId !== undefined && sessionId.length > 0 ? sessionId : undefined;
+  const direct = laneKeyFor(kind, kind, correlation.length > 0 ? correlation : undefined, session);
   if (hasFlight(direct)) {
     return direct;
+  }
+  // The reply echoed a session but the flight was opened without one (a global
+  // query, or a lane built before this client scoped by session). Never fail to
+  // settle merely because the key gained a suffix.
+  const plain = laneKeyFor(kind, kind, correlation.length > 0 ? correlation : undefined);
+  if (direct !== plain && hasFlight(plain)) {
+    return plain;
   }
   if (kind !== 'error') {
     return '';
   }
   if (requestType.length > 0) {
-    const mapped = laneKeyFor(requestType, responseKindFor(requestType), correlation.length > 0 ? correlation : undefined);
-    return hasFlight(mapped) ? mapped : '';
+    const mapped = laneKeyFor(requestType, responseKindFor(requestType),
+      correlation.length > 0 ? correlation : undefined, session);
+    if (hasFlight(mapped)) {
+      return mapped;
+    }
+    if (correlation.length === 0) {
+      // The error names the request kind but carried no correlation: match a
+      // session-scoped lane, or the legacy session-less one.
+      const mappedPlain = laneKeyFor(requestType, responseKindFor(requestType));
+      if (hasFlight(mappedPlain)) {
+        return mappedPlain;
+      }
+    }
+    return '';
   }
   // Direct-send failure: only the message lane can be waiting without correlation.
   return hasFlight('sent') ? 'sent' : '';
@@ -210,6 +253,7 @@ export class RequestTracker {
       token: this.tokenSeq,
       policy: request.lanePolicy,
       type: request.type,
+      responseKind: request.responseKind,
       waiters: []
     });
     return this.tokenSeq;
@@ -259,6 +303,26 @@ export class RequestTracker {
     }
     waiter.resolve(frame);
     return true;
+  }
+
+  /**
+   * Settle the oldest still-pending flight of one response kind. Used for a
+   * reply that carries no correlation or session id (measured: models and
+   * permission-options do not echo sessionId), so two sessions can never share
+   * one answer. Flights are stored in registration order; the gateway answers
+   * a single socket in order, so oldest-first matches request order.
+   */
+  settleAny(responseKind: string, frame: WireFrame): string {
+    let target = '';
+    this.flights.forEach((flight: Flight, key: string) => {
+      if (target.length === 0 && flight.responseKind === responseKind) {
+        target = key;
+      }
+    });
+    if (target.length === 0 || !this.settle(target, frame)) {
+      return '';
+    }
+    return target;
   }
 
   /** Timeout fired: only the owning token may fail the flight. */

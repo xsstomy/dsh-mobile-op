@@ -33,10 +33,14 @@ struct WorkspacePage {
   @State query: string = '';
   @State pickerOpen: boolean = false;
   @State now: number = Date.now();
+  /** Visible roster refresh state for the 刷新 control (a background reload is silent). */
+  @State refreshing: boolean = false;
   private store: GatewayStore = GatewayStore.current;
   /** Bounded self-heal timer for a roster write that lost the socket race. */
   private retryTimer: number = -1;
   private retryLeft: number = 0;
+  /** In-flight guard: a page-show reload and a 刷新 tap must not stack. */
+  private reloading: boolean = false;
   /**
    * Session id whose `selectSession` is currently in flight. Opening a session
    * takes several round trips, so over a WAN tunnel it can take ~1 s — long
@@ -68,6 +72,11 @@ struct WorkspacePage {
    * it is in flight.
    */
   private async reload(): Promise<void> {
+    if (this.reloading) {
+      return;
+    }
+    this.reloading = true;
+    this.refreshing = true;
     this.rosterError = '';
     this.now = Date.now();
     try {
@@ -90,6 +99,9 @@ struct WorkspacePage {
         this.retryLeft = this.retryLeft + 1;
         this.scheduleReload();
       }
+    } finally {
+      this.reloading = false;
+      this.refreshing = false;
     }
   }
 
@@ -444,6 +456,25 @@ struct WorkspacePage {
             .fontColor(this.ui.connection === 'connected' ? AppColors.SUCCESS : AppColors.WARN)
             .layoutWeight(1)
             .textAlign(TextAlign.End)
+          // The gateway never pushes a session-list change, so a session created
+          // on another client only appears on a poll. Make that poll an explicit,
+          // labelled button instead of the unlabelled icon in the brand row.
+          Row({ space: 4 }) {
+            SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+              .fontSize(13)
+              .fontColor([AppColors.DARK_INK])
+            Text(this.refreshing ? '刷新中' : '刷新')
+              .fontSize(AppFont.CAPTION)
+              .fontColor(AppColors.DARK_INK)
+          }
+          .id('refreshSessionsButton')
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .backgroundColor(Glass.FILL)
+          .borderRadius(AppRadius.PILL)
+          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+          .onClick(() => {
+            this.reload();
+          })
         }
         .width('100%')
         .margin({ top: 6 })

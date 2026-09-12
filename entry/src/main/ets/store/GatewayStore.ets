@@ -450,14 +450,21 @@ export class GatewayStore {
     snapshot.balanceDisplay = this.balanceDisplay;
     snapshot.balanceError = this.balanceError;
     snapshot.balanceAt = this.balanceAt;
+    // Pending cards are stored for every session (a switch must still find
+    // them) but only the open session may render them; otherwise a question or
+    // approval raised in another conversation shows up in this one.
     const questions: QuestionCardRow[] = [];
     this.questions.forEach((question: QuestionCardRow) => {
-      questions.push(question);
+      if (question.sessionId === this.selectedSessionId) {
+        questions.push(question);
+      }
     });
     snapshot.questions = questions;
     const approvals: ApprovalCardRow[] = [];
     this.approvals.forEach((approval: ApprovalCardRow) => {
-      approvals.push(approval);
+      if (approval.sessionId === this.selectedSessionId) {
+        approvals.push(approval);
+      }
     });
     snapshot.approvals = approvals;
     snapshot.todos = this.todos;
@@ -904,10 +911,19 @@ export class GatewayStore {
     this.syncTurnActivityFromHost();
     this.publish();
     this.client.notify('subscribe', new SessionPayload('subscribe', sessionId));
+    // Drop every per-session panel before the new session's refresh lands, so
+    // the previous conversation's todos/goal/stats/model/permission/commands
+    // can never flash under the new one.
     this.todos = null;
     this.todosSeq = -1;
     this.goal = null;
     this.stats = null;
+    this.modelGroups = [];
+    this.currentModel = { provider: '', model: '', reasoningEffort: '' };
+    this.permissionOptions = [];
+    this.currentPermission = '';
+    this.commandGroups = [];
+    this.commandOutcome = null;
   }
 
   /**
@@ -982,8 +998,19 @@ export class GatewayStore {
    */
   resumeFromBackground(): void {
     this.client.setForeground(true);
-    this.connectSaved().then(() => {
-      return this.catchUpConversation();
+    this.connectSaved().then(async (): Promise<void> => {
+      await this.catchUpConversation();
+      // The gateway pushes no session-list notification, so a session created
+      // or renamed on another client (desktop) only appears when we poll. A
+      // foreground return is the natural poll point: the socket is often still
+      // up, so no reconnect/bootstrap runs and the roster would stay stale.
+      try {
+        await this.refreshWorkspaces();
+        await this.refreshSessions();
+      } catch (failure) {
+        // Non-fatal: the workspace page retries and shows its own error line.
+        void failure;
+      }
     }).catch((error: Error) => {
       void error;
     });
@@ -1145,10 +1172,17 @@ export class GatewayStore {
   }
 
   async executeCommand(line: string): Promise<void> {
+    const sessionId = this.selectedSessionId;
+    if (sessionId.length === 0) {
+      return;
+    }
     this.commandOutcome = null;
     try {
       const frame = await this.client.request('command-execute',
-        new CommandExecutePayload(this.selectedSessionId, line));
+        new CommandExecutePayload(sessionId, line));
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       const result = frame.result;
       this.commandOutcome = {
         line: line,
@@ -1156,15 +1190,27 @@ export class GatewayStore {
         text: result === undefined ? '' : (result.text ?? '')
       };
     } catch (failure) {
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.commandOutcome = { line: line, kind: 'error', text: (failure as Error).message };
     }
     this.publish();
   }
 
   async loadCommandOptions(command: string): Promise<void> {
+    const sessionId = this.selectedSessionId;
+    if (sessionId.length === 0) {
+      return;
+    }
     try {
       const frame = await this.client.request('command-options',
-        new CommandQueryPayload('command-options', this.selectedSessionId, command));
+        new CommandQueryPayload('command-options', sessionId, command));
+      // The user may have switched sessions while this was in flight; the flat
+      // option list belongs to the session that asked for it.
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       const options = frame.options;
       const rows: PermissionOptionRow[] = [];
       if (Array.isArray(options)) {
@@ -1176,6 +1222,9 @@ export class GatewayStore {
       this.permissionOptions = rows;
       this.commandOutcome = { line: `/${command}`, kind: 'options', text: '' };
     } catch (failure) {
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.commandOutcome = { line: `/${command}`, kind: 'error', text: (failure as Error).message };
     }
     this.publish();
@@ -1196,8 +1245,15 @@ export class GatewayStore {
     this.publish();
     try {
       const frame = await this.client.request('history', new TrajectoryPayload(sessionId, 300, 8 * 1024 * 1024));
+      // A late page from a previous session must not overwrite the open one.
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.trajectory = buildTrajectory(asSessionEvents(frame));
     } catch (failure) {
+      if (this.selectedSessionId !== sessionId) {
+        return;
+      }
       this.notice = (failure as Error).message;
       this.noticeIsError = true;
     }
@@ -1771,8 +1827,10 @@ export class GatewayStore {
       const answer = answers[index];
       items.push(new QuestionAnswerItem(question.id, answer.selected, answer.custom));
     }
+    // rpcId is the wire correlation (the reply echoes it), so the lane settles
+    // exactly even with several sessions' cards in flight.
     await this.client.request('question-answer',
-      new QuestionAnswerPayload(rpcId, card.sessionId, items));
+      new QuestionAnswerPayload(rpcId, card.sessionId, items), rpcId);
   }
 
   async cancelQuestion(rpcId: string): Promise<void> {
@@ -1780,7 +1838,7 @@ export class GatewayStore {
     if (card === undefined) {
       return;
     }
-    await this.client.request('question-cancel', new QuestionCancelPayload(rpcId, card.sessionId));
+    await this.client.request('question-cancel', new QuestionCancelPayload(rpcId, card.sessionId), rpcId);
   }
 
   async respondApproval(rpcId: string, outcome: string): Promise<void> {
@@ -1789,7 +1847,7 @@ export class GatewayStore {
       return;
     }
     await this.client.request('approval-response',
-      new ApprovalResponsePayload(rpcId, card.sessionId, card.approvalId, outcome));
+      new ApprovalResponsePayload(rpcId, card.sessionId, card.approvalId, outcome), rpcId);
   }
 
   /**
@@ -2123,6 +2181,13 @@ export class GatewayStore {
       return;
     }
     if (kind === 'tasks-updated') {
+      // The gateway pushes every session's projection; only the open one owns
+      // the flat todos/goal fields, otherwise another conversation's task list
+      // appears under this session. An empty sessionId means a legacy push.
+      const pushedSession = frame.sessionId ?? '';
+      if (pushedSession.length > 0 && pushedSession !== this.selectedSessionId) {
+        return;
+      }
       // PROTOCOL.md 6.1: higher `asOfSeq` wins; drop stale pushes.
       if (!shouldApplyTodos(frame.asOfSeq, this.todosSeq)) {
         return;
@@ -2133,6 +2198,10 @@ export class GatewayStore {
       return;
     }
     if (kind === 'goal-updated') {
+      const pushedSession = frame.sessionId ?? '';
+      if (pushedSession.length > 0 && pushedSession !== this.selectedSessionId) {
+        return;
+      }
       this.goal = this.goalRowOf(frame);
       this.publish();
       return;

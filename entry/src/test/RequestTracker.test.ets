@@ -6,7 +6,7 @@ import {
 import { WireFrame } from '../main/ets/protocol/Types';
 import { SESSION_CREATED_FRAME } from './fixtures/Frames';
 import { decodeFrame } from '../main/ets/protocol/WireDecoder';
-import { TypePayload } from '../main/ets/protocol/Payloads';
+import { SessionPayload, TypePayload } from '../main/ets/protocol/Payloads';
 import { frameOf } from './TestHelpers';
 
 function frame(kind: string): WireFrame {
@@ -182,6 +182,80 @@ export default function requestTrackerTest(): void {
       tracker.register(request);
       expect(tracker.hasFlight(request.key)).assertTrue();
       expect(tracker.pendingCount).assertEqual(1);
+    });
+
+    it('puts the target session in the lane key (session-bleed fix)', 0, () => {
+      const first = buildRequest('history', new SessionPayload('history', 'session-a'));
+      const second = buildRequest('history', new SessionPayload('history', 'session-b'));
+      expect(first.key).assertEqual('history@session-a');
+      expect(second.key).assertEqual('history@session-b');
+      expect(first.targetSessionId).assertEqual('session-a');
+      // A global query keeps the plain response-kind lane.
+      const global = buildRequest('models', new TypePayload('models'));
+      expect(global.key).assertEqual('models');
+      // A per-request correlation still wins over the session suffix.
+      const correlated = buildRequest('history', new SessionPayload('history', 'session-a'), 'r1');
+      expect(correlated.key).assertEqual('history#r1');
+    });
+
+    it('never shares one flight between two sessions', 0, async () => {
+      const tracker = new RequestTracker();
+      const first = buildRequest('history', new SessionPayload('history', 'session-a'));
+      const second = buildRequest('history', new SessionPayload('history', 'session-b'));
+      const tokenA = tracker.register(first);
+      const promiseA = tracker.await(first, tokenA);
+      const tokenB = tracker.register(second);
+      expect(tokenB === tokenA).assertFalse();
+      const promiseB = tracker.await(second, tokenB);
+      expect(tracker.pendingCount).assertEqual(2);
+
+      const frameA = decodeFrame('{"kind":"history","sessionId":"session-a"}') as WireFrame;
+      const frameB = decodeFrame('{"kind":"history","sessionId":"session-b"}') as WireFrame;
+      expect(tracker.settle('history@session-a', frameA)).assertTrue();
+      const resolvedA = await promiseA;
+      expect(resolvedA.sessionId).assertEqual('session-a');
+      expect(tracker.hasFlight('history@session-b')).assertTrue();
+      expect(tracker.settle('history@session-b', frameB)).assertTrue();
+      const resolvedB = await promiseB;
+      expect(resolvedB.sessionId).assertEqual('session-b');
+      expect(tracker.pendingCount).assertEqual(0);
+    });
+
+    it('still coalesces duplicate reads of the SAME session', 0, () => {
+      const tracker = new RequestTracker();
+      const first = buildRequest('tasks', new SessionPayload('tasks', 'session-a'));
+      const second = buildRequest('tasks', new SessionPayload('tasks', 'session-a'));
+      const token = tracker.register(first);
+      expect(tracker.register(second)).assertEqual(token);
+      expect(tracker.pendingCount).assertEqual(1);
+    });
+
+    it('settles a session-scoped reply by the frame session id', 0, () => {
+      const has = (key: string): boolean => key === 'history@session-a';
+      expect(resolveSettleKey('history', '', '', has, 'session-a')).assertEqual('history@session-a');
+      expect(resolveSettleKey('history', '', '', has, 'session-b')).assertEqual('');
+      // A reply without a session id must not borrow the session lane.
+      expect(resolveSettleKey('history', '', '', has)).assertEqual('');
+    });
+
+    it('settles the oldest same-kind lane when the reply has no session id', 0, async () => {
+      const tracker = new RequestTracker();
+      const first = buildRequest('models', new SessionPayload('models', 'session-a'));
+      const second = buildRequest('models', new SessionPayload('models', 'session-b'));
+      const tokenA = tracker.register(first);
+      const promiseA = tracker.await(first, tokenA);
+      const tokenB = tracker.register(second);
+      const promiseB = tracker.await(second, tokenB);
+      expect(tracker.pendingCount).assertEqual(2);
+
+      // The gateway does not echo sessionId on `models`; oldest-first keeps the
+      // two answers with the two requests instead of resolving both at once.
+      const frameA = frame('models');
+      expect(tracker.settleAny('models', frameA)).assertEqual('models@session-a');
+      expect((await promiseA).kind).assertEqual('models');
+      expect(tracker.settleAny('models', frame('models'))).assertEqual('models@session-b');
+      expect((await promiseB).kind).assertEqual('models');
+      expect(tracker.pendingCount).assertEqual(0);
     });
   });
 }
