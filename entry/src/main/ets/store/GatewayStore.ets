@@ -292,6 +292,8 @@ export class GatewayStore {
   /** LAN discovery: probes the current /24 for the gateway listener. */
   private readonly lanScanner: LanScanner = new LanScanner();
   private scanning: boolean = false;
+  /** Latest default-network availability, surfaced so the UI can say 无网络. */
+  private networkAvailable: boolean = true;
 
   static get current(): GatewayStore {
     if (GatewayStore.instance === undefined) {
@@ -447,6 +449,7 @@ export class GatewayStore {
     snapshot.savedEndpoints = this.savedEndpoints;
     snapshot.autoSwitch = this.autoSwitch;
     snapshot.endpointScanning = this.scanning;
+    snapshot.networkAvailable = this.networkAvailable;
     snapshot.capabilities = this.status.capabilities;
     snapshot.notice = this.notice;
     snapshot.noticeIsError = this.noticeIsError;
@@ -581,6 +584,7 @@ export class GatewayStore {
     this.network.start(() => {
       // An interface came back: pick the right address BEFORE retrying, so the
       // client does not reconnect to the listener we can no longer reach.
+      this.networkAvailable = this.network.hint().available;
       this.maybeAutoSelect().then(() => {
         this.client.retryNow();
       }).catch((error: Error) => {
@@ -589,10 +593,14 @@ export class GatewayStore {
       });
     }, () => {
       // Wi-Fi/cellular changed: re-evaluate the preferred address. A live
-      // connection is never torn down here (see maybeAutoSelect).
+      // connection is never torn down here (see maybeAutoSelect), but the UI
+      // must know at once when there is no network left at all.
+      this.networkAvailable = this.network.hint().available;
+      this.publish();
       void this.maybeAutoSelect();
     });
     this.autoSwitch = await this.preferences.autoSwitch();
+    this.networkAvailable = this.network.hint().available;
     this.savedEndpoints = parseSavedEndpoints(await this.preferences.endpointRecordsRaw());
     let endpoint = await this.preferences.endpoint();
     this.endpointCache = endpoint;

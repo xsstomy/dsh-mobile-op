@@ -295,6 +295,19 @@ export class GatewayClient {
     if (this.credentials.pairingCode !== undefined) {
       return;
     }
+    // A pending backoff timer also reports CONNECTING, but that is the *timer*,
+    // not a socket attempt in flight. A recovered network must skip the rest of
+    // the delay instead of being ignored for up to 30s (which made the home
+    // status look stuck on "connecting" long after Wi-Fi had come back).
+    if (this.reconnectTimer >= 0) {
+      if (!this.foreground) {
+        this.reconnectPending = true;
+        return;
+      }
+      this.reconnectPending = false;
+      this.openChannels();
+      return;
+    }
     const state = this.state;
     if (state === GatewayConnectionState.CONNECTED || state === GatewayConnectionState.CONNECTING ||
       state === GatewayConnectionState.AUTHENTICATING) {
@@ -305,10 +318,6 @@ export class GatewayClient {
       return;
     }
     this.reconnectPending = false;
-    if (this.reconnectTimer >= 0) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = -1;
-    }
     this.openChannels();
   }
 

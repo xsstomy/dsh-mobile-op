@@ -138,6 +138,8 @@ export interface UiSnapshot {
   autoSwitch: boolean;
   /** True while the LAN discovery scan is running. */
   endpointScanning: boolean;
+  /** False when the device currently has no usable default network. */
+  networkAvailable: boolean;
   capabilities: string[];
   notice: string;
   noticeIsError: boolean;
@@ -217,6 +219,7 @@ export function emptyUiSnapshot(): UiSnapshot {
     savedEndpoints: [],
     autoSwitch: true,
     endpointScanning: false,
+    networkAvailable: true,
     capabilities: [],
     notice: '',
     noticeIsError: false,

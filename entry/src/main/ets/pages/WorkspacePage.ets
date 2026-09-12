@@ -191,8 +191,30 @@ struct WorkspacePage {
     return result;
   }
 
+  /** Human-readable connection state (never the raw wire enum). */
   private statusLabel(): string {
-    return this.ui.connection === 'connected' ? '已连接' : this.ui.connection;
+    const state = this.ui.connection;
+    if (state === 'connected') {
+      return '已连接';
+    }
+    if (!this.ui.networkAvailable) {
+      // Reconnecting with no interface left is not "connecting", it is 无网络;
+      // saying so is what stops the label from looking frozen.
+      return '无网络';
+    }
+    if (state === 'connecting') {
+      // The client reports the reconnect countdown as the detail; surfacing it
+      // stops a slow backoff from looking like a frozen "connecting".
+      const detail = this.ui.connectionDetail;
+      return detail.startsWith('第 ') ? `连接中 · ${detail}` : '连接中';
+    }
+    if (state === 'authenticating') {
+      return '认证中';
+    }
+    if (state === 'failed') {
+      return '连接失败';
+    }
+    return '未连接';
   }
 
   @Builder
