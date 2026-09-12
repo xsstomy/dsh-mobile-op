@@ -11,6 +11,7 @@ import protocolTest from './Protocol.test';
 import questionsTest from './Questions.test';
 import queueTest from './Queue.test';
 import requestTrackerTest from './RequestTracker.test';
+import sessionsTest from './Sessions.test';
 import settingsTest from './Settings.test';
 import statsTest from './Stats.test';
 import statusLineTest from './StatusLine.test';
@@ -24,6 +25,7 @@ export default function testsuite(): void {
   queueTest();
   pairingTest();
   requestTrackerTest();
+  sessionsTest();
   settingsTest();
   statsTest();
   statusLineTest();

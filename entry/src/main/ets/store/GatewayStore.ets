@@ -33,6 +33,10 @@ import {
   UiSnapshot, WorkspaceRow, emptyUiSnapshot
 } from './UiState';
 import { TodoRow, shouldApplyTodos, todoRowsOf } from '../sync/Todos';
+import {
+  applyEventToRoster, applySessionTitle, applySummaryTitles, displayTitleOf, mergeSessionRows,
+  nextTitleSeq, projectedTitleOf, projectionsSeqOf, SessionTitle
+} from '../sync/Sessions';
 import { TrajectoryRow, buildTrajectory } from '../projection/Trajectory';
 import { CrumbRow, FileEntryRow, PreviewKind, fileRowsFrom, isTextPreview, previewKindOf, sha256Matches, sortEntries } from '../protocol/Files';
 import { AttachmentRow, DownloadProgress, FilePreviewRow, SearchRow } from './UiState';
@@ -63,20 +67,6 @@ export const UI_KEY = 'gwUi';
 
 /** Kept for pages that only need a re-render nudge (see UiState for the real state). */
 export const VERSION_KEY = 'gwUiVersion';
-
-/** Session titles arrive inside the `projections.values.title` block. */
-function sessionTitleOf(session: WireSessionSummary): string {
-  const projections = session.projections;
-  if (projections === undefined || projections === null) {
-    return '';
-  }
-  const values = (projections as Record<string, Object>)['values'];
-  if (values === undefined || values === null) {
-    return '';
-  }
-  const title = (values as Record<string, Object>)['title'];
-  return typeof title === 'string' ? title : '';
-}
 
 /**
  * The agent preset a session was started with. The host reports it inside
@@ -221,7 +211,8 @@ export class GatewayStore {
   private archivedSessionIds: string[] = [];
   private selectedWorkspaceId: string = '';
   private selectedSessionId: string = '';
-  private titles: Map<string, string> = new Map<string, string>();
+  /** Display title per session, ordered by the seq that produced it (see sync/Sessions). */
+  private sessionTitles: Map<string, SessionTitle> = new Map<string, SessionTitle>();
   private history: WireSessionEvent[] = [];
   private conversation: ConversationItem[] = [];
   /** True while the selected session's first history page is in flight. */
@@ -405,14 +396,16 @@ export class GatewayStore {
   }
 
   titleOfSession(sessionId: string): string {
-    const title = this.titles.get(sessionId);
-    if (title !== undefined && title.length > 0) {
-      return title;
-    }
-    if (sessionId.length === 0) {
-      return '';
-    }
-    return sessionId.startsWith('session-') ? sessionId.substring(8, 16) : sessionId;
+    return displayTitleOf(this.sessionTitles, sessionId);
+  }
+
+  /**
+   * Ordered title write shared by live events, metadata pushes, local renames
+   * and projection snapshots: only a newer seq may replace the stored name, so
+   * the home roster and the open conversation can never disagree about it.
+   */
+  private setSessionTitle(sessionId: string, title: string, seq: number): void {
+    applySessionTitle(this.sessionTitles, sessionId, title, seq);
   }
 
   private workspaceOf(workspaceId: string): WireWorkspace | undefined {
@@ -690,6 +683,7 @@ export class GatewayStore {
     this.selectedSessionId = '';
     this.workspaces = [];
     this.sessions = [];
+    this.sessionTitles.clear();
     this.history = [];
     this.conversation = [];
     this.clearHistoryCache();
@@ -808,14 +802,12 @@ export class GatewayStore {
   async refreshSessions(): Promise<void> {
     await this.withConnectRetry(async (): Promise<void> => {
       const frame = await this.client.request('sessions', new TypePayload('sessions'));
-      this.sessions = asSessionSummaries(frame);
-      for (const session of this.sessions) {
-        const sessionId = session.sessionId ?? '';
-        const title = sessionTitleOf(session);
-        if (sessionId.length > 0 && title.length > 0) {
-          this.titles.set(sessionId, title);
-        }
-      }
+      const incoming = asSessionSummaries(frame);
+      // The snapshot is authoritative, but it can lag the live events already
+      // folded into the current rows (a brand-new session may still read blank
+      // here) and an older title cell must not roll back a live rename.
+      this.sessions = mergeSessionRows(this.sessions, incoming);
+      applySummaryTitles(this.sessionTitles, this.sessions);
       this.syncTurnActivityFromHost();
       this.publish();
     });
@@ -1879,6 +1871,10 @@ export class GatewayStore {
     if (this.selectedSessionId !== sessionId) {
       return;
     }
+    // The history projection carries the same `title` cell as the roster, so
+    // opening a session names it immediately — even before any live event or
+    // `sessions` refresh — while the seq guard rejects an older name.
+    this.setSessionTitle(sessionId, projectedTitleOf(frame.projections), projectionsSeqOf(frame.projections));
     const page = asSessionEvents(frame);
     const outcome = mergeHistoryPage(this.history, page);
     this.history = outcome.events;
@@ -1980,8 +1976,11 @@ export class GatewayStore {
   }
 
   async renameSession(sessionId: string, title: string): Promise<void> {
-    await this.client.request('session-rename', new RenamePayload(sessionId, title));
-    this.titles.set(sessionId, title);
+    const frame = await this.client.request('session-rename', new RenamePayload(sessionId, title));
+    // The reply carries the persisted seq; without one, advance past the
+    // stored seq so an older snapshot cannot undo the user's rename.
+    const seq = typeof frame.seq === 'number' ? frame.seq : nextTitleSeq(this.sessionTitles, sessionId);
+    this.setSessionTitle(sessionId, title, seq);
     this.publish();
   }
 
@@ -2124,11 +2123,11 @@ export class GatewayStore {
         void this.refreshHistoryAfterTurn(sessionId);
       }
       if ((event.type ?? '') === 'session/title') {
-        const title = titleOf(wireEvent);
-        if (title.length > 0) {
-          this.titles.set(sessionId, title);
-        }
+        this.setSessionTitle(sessionId, titleOf(wireEvent), seq);
       }
+      // Fold the event into the roster row so the home list reflects activity
+      // without waiting for the next `sessions` round trip.
+      applyEventToRoster(this.sessions, sessionId, wireEvent);
       this.publish();
       return;
     }
@@ -2213,10 +2212,8 @@ export class GatewayStore {
     }
     if (kind === 'session-title-changed') {
       const sessionId = frame.sessionId ?? '';
-      const title = frame.title ?? '';
-      if (sessionId.length > 0 && title.length > 0) {
-        this.titles.set(sessionId, title);
-      }
+      const seq = typeof frame.seq === 'number' ? frame.seq : nextTitleSeq(this.sessionTitles, sessionId);
+      this.setSessionTitle(sessionId, frame.title ?? '', seq);
       this.publish();
       return;
     }
@@ -2249,10 +2246,8 @@ export class GatewayStore {
     }
     if (kind === 'session-renamed') {
       const sessionId = frame.sessionId ?? '';
-      const title = frame.title ?? '';
-      if (sessionId.length > 0 && title.length > 0) {
-        this.titles.set(sessionId, title);
-      }
+      const seq = typeof frame.seq === 'number' ? frame.seq : nextTitleSeq(this.sessionTitles, sessionId);
+      this.setSessionTitle(sessionId, frame.title ?? '', seq);
       this.publish();
     }
   }
