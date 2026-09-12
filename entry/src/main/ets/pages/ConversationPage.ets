@@ -5,7 +5,7 @@
 import { KeyboardAvoidMode, router } from '@kit.ArkUI';
 import { GatewayStore } from '../store/GatewayStore';
 import { UI_KEY, UiSnapshot, emptyUiSnapshot, activeWorkspace, sessionPresetId, agentPresetLabel } from '../store/UiState';
-import { AppColors, AppFont, AppRadius, AppSpacing, AppShadow, Glass } from '../common/Constants';
+import { AppColors, AppFont, AppRadius, AppSpacing, AppShadow, Glass, PlanChipMotion } from '../common/Constants';
 import {
   ConversationItem, ConversationRole, conversationListItemCount, isTurnTail, shouldShowThinking,
   toolSummaryText, turnTimeSpan, turnTokenTotals
@@ -71,6 +71,21 @@ struct ConversationPage {
   @State atBottom: boolean = true;
   /** Guards the composer's quick "new session" button against double taps. */
   @State creatingSession: boolean = false;
+  /** Plan chip breathing light: driven by `animateTo`, see `syncPlanChipBreath`. */
+  @State planChipOpacity: number = PlanChipMotion.SOLID;
+  /**
+   * The chip's committed colour, held in state so `animateTo` can ease it. It is
+   * NOT driven by the `.animation()` modifier: that modifier applies to every
+   * attribute written before it, so it would have swallowed the breathing
+   * opacity as a single fade.
+   */
+  @State planChipColorOn: boolean = false;
+  /** Last breath state, so the loop only starts/stops on an edge. */
+  private planChipBreathing: boolean = false;
+  /** Deadline that keeps a fast switch's breath visible (see BREATH_FLOOR_MS). */
+  private planChipBreatheUntil: number = 0;
+  /** Pending delayed stop; 0 when none is armed. */
+  private planChipStopTimer: number = 0;
   /** `@` completion popover: candidates come from `file-list` of the session cwd. */
   @State mentionOpen: boolean = false;
   @State mentionRows: FileEntryRow[] = [];
@@ -109,6 +124,14 @@ struct ConversationPage {
     this.store.refreshDeepSeekBalance(false);
   }
 
+  /** Leaving the page must not leave the delayed breath stop armed. */
+  aboutToDisappear(): void {
+    if (this.planChipStopTimer !== 0) {
+      clearTimeout(this.planChipStopTimer);
+      this.planChipStopTimer = 0;
+    }
+  }
+
   /**
    * Follow the tail: scroll to the newest bubble when the timeline grows, or when
    * the agent starts working (the indicator is a list item too, but it does not
@@ -131,6 +154,104 @@ struct ConversationPage {
     this.lastTurnActive = working;
     this.lastPendingCount = pending;
     this.fetchMissingAttachments();
+    this.syncPlanChipBreath();
+  }
+
+  /**
+   * True while a plan-mode switch is not settled yet: our tap-time intent is in
+   * flight, or the host itself reports the selection as pending (a toggle during
+   * a running turn is acknowledged as `queued` and only commits on the next
+   * accepted pre-step).
+   */
+  private planChipSwitching(): boolean {
+    return this.ui.planToggleRunning || (this.ui.plan !== null && this.ui.plan.pending);
+  }
+
+  /**
+   * Start/stop the chip's breathing light on the edge of `planChipSwitching`.
+   *
+   * A switch that settles within `BREATH_FLOOR_MS` still keeps the breath until
+   * that floor elapses: on a LAN the round trip is 30-50 ms, so stopping the
+   * instant the host confirms would make the animation invisible. The final
+   * colour still follows the host projection, and a switch that takes longer
+   * (WAN, queued during a turn) breathes until it actually settles.
+   *
+   * The zero-duration clear before each change follows the documented fix for
+   * interrupted infinite loops: without it, repeated starts stack animation
+   * instances and the breath stops being visible. Both clears assign a value
+   * different from the loop's own end value (`BREATH_DIM`), as that fix requires.
+   */
+  private syncPlanChipBreath(): void {
+    const want = this.planChipSwitching();
+    const on = this.planChipOn();
+    if (want === this.planChipBreathing && on === this.planChipColorOn) {
+      return;
+    }
+    const ui = this.getUIContext();
+    // The committed colour eases in on its own, explicitly: no `.animation()`
+    // modifier is involved, so it can never capture the breathing opacity.
+    if (on !== this.planChipColorOn) {
+      ui.animateTo({ duration: PlanChipMotion.COLOR_MS, curve: Curve.EaseInOut }, () => {
+        this.planChipColorOn = on;
+      });
+    }
+    if (want && !this.planChipBreathing) {
+      this.planChipBreatheUntil = Date.now() + PlanChipMotion.BREATH_FLOOR_MS;
+      this.startPlanChipBreath();
+      return;
+    }
+    if (!want && this.planChipBreathing) {
+      const left = this.planChipBreatheUntil - Date.now();
+      if (left <= 0) {
+        this.stopPlanChipBreath();
+        return;
+      }
+      if (this.planChipStopTimer === 0) {
+        this.planChipStopTimer = setTimeout(() => {
+          this.planChipStopTimer = 0;
+          // A switch that came back while we waited keeps breathing instead.
+          if (!this.planChipSwitching()) {
+            this.stopPlanChipBreath();
+          }
+        }, left);
+      }
+    }
+  }
+
+  /** Enter the breath: clear any stale loop first, then run it forever. */
+  private startPlanChipBreath(): void {
+    if (this.planChipStopTimer !== 0) {
+      clearTimeout(this.planChipStopTimer);
+      this.planChipStopTimer = 0;
+    }
+    this.planChipBreathing = true;
+    const ui = this.getUIContext();
+    ui.animateTo({ duration: 0, iterations: 1, playMode: PlayMode.Normal }, () => {
+      this.planChipOpacity = PlanChipMotion.SOLID;
+    });
+    ui.animateTo({
+      duration: PlanChipMotion.BREATH_MS,
+      iterations: -1,
+      playMode: PlayMode.Alternate,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.planChipOpacity = PlanChipMotion.BREATH_DIM;
+    });
+  }
+
+  /** Leave the breath and settle solid; the colour keeps easing on its own. */
+  private stopPlanChipBreath(): void {
+    if (!this.planChipBreathing) {
+      return;
+    }
+    this.planChipBreathing = false;
+    const ui = this.getUIContext();
+    ui.animateTo({ duration: 0, iterations: 1, playMode: PlayMode.Normal }, () => {
+      this.planChipOpacity = PlanChipMotion.DISABLED;
+    });
+    ui.animateTo({ duration: 0, iterations: 1, playMode: PlayMode.Normal }, () => {
+      this.planChipOpacity = PlanChipMotion.SOLID;
+    });
   }
 
   /** 0-based List index of the first pending approval/question card. */
@@ -1465,11 +1586,20 @@ struct ConversationPage {
     return this.ui.planToggleCommand.length > 0 && this.ui.plan !== null;
   }
 
+  /**
+   * The chip reads `Plan` at all times: a switch in flight is shown by the
+   * breathing light, not by an ellipsis, so the two never fight.
+   */
   private planChipLabel(): string {
-    if (this.ui.plan !== null && this.ui.plan.pending) {
-      return 'Plan…';
-    }
     return 'Plan';
+  }
+
+  /** Breathing wins over the static review dim; otherwise the chip is solid. */
+  private planChipAlpha(): number {
+    if (this.planChipBreathing) {
+      return this.planChipOpacity;
+    }
+    return this.ui.planReviewRunning ? PlanChipMotion.DISABLED : PlanChipMotion.SOLID;
   }
 
   /** Plan-mode chip: reads the host projection, toggles through the host command. */
@@ -1487,9 +1617,9 @@ struct ConversationPage {
       .width(34)
       .height(34)
       .borderRadius(AppRadius.CIRCLE)
-      .backgroundColor(this.planChipOn() ? AppColors.BRAND : Glass.FILL_STRONG)
+      .backgroundColor(this.planChipColorOn ? AppColors.BRAND : Glass.FILL_STRONG)
       .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-      .opacity(this.ui.planReviewRunning || this.ui.planToggleRunning ? 0.5 : 1)
+      .opacity(this.planChipAlpha())
       .onClick(() => {
         if (!this.ui.planReviewRunning && !this.ui.planToggleRunning && !this.ui.busy) {
           this.store.togglePlanMode();

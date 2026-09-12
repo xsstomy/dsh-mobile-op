@@ -100,6 +100,36 @@ export class AppRadius {
   static readonly CIRCLE: number = 999;
 }
 
+/**
+ * Plan chip motion: while a `/plan-toggle` waits for the host, the chip breathes
+ * (opacity cycle) instead of changing its label; the background then eases into
+ * the confirmed colour.
+ *
+ * The values matter for the documented interruption fix (see `syncPlanChipBreath`):
+ * `BREATH_DIM` must differ from `SOLID`, because stopping an infinite
+ * `animateTo` loop means clearing it with a zero-duration assignment of a
+ * different value first — otherwise repeated interruptions stack and the loop
+ * stops showing.
+ */
+export class PlanChipMotion {
+  /** One leg of the breath; `PlayMode.Alternate` plays it back, so a cycle is 2×. */
+  static readonly BREATH_MS: number = 700;
+  /** Darkest point of the breath; must stay different from `SOLID`. */
+  static readonly BREATH_DIM: number = 0.35;
+  /** Resting opacity, and the value the breath settles on. */
+  static readonly SOLID: number = 1;
+  /** Static dim while the /plan-review pipeline owns the chip (unchanged semantics). */
+  static readonly DISABLED: number = 0.5;
+  /** How long the confirmed colour takes to ease in. */
+  static readonly COLOR_MS: number = 250;
+  /**
+   * A switch shows the breath for at least this long before settling. On a LAN
+   * the whole round trip is 30-50 ms, so without a floor the animation would be
+   * over before the eye registers anything — the tap would look inert again.
+   */
+  static readonly BREATH_FLOOR_MS: number = 900;
+}
+
 export class AppSpacing {
   static readonly PAGE: number = 18;
   static readonly GAP: number = 12;
