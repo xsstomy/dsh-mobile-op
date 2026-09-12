@@ -579,7 +579,14 @@ export class GatewayStore {
     // Network recovery: skip the rest of the reconnect backoff once the default
     // network is usable again (wifi/radio came back).
     this.network.start(() => {
-      this.client.retryNow();
+      // An interface came back: pick the right address BEFORE retrying, so the
+      // client does not reconnect to the listener we can no longer reach.
+      this.maybeAutoSelect().then(() => {
+        this.client.retryNow();
+      }).catch((error: Error) => {
+        void error;
+        this.client.retryNow();
+      });
     }, () => {
       // Wi-Fi/cellular changed: re-evaluate the preferred address. A live
       // connection is never torn down here (see maybeAutoSelect).
@@ -834,15 +841,18 @@ export class GatewayStore {
     if (preferences === undefined || this.savedEndpoints.length === 0) {
       return;
     }
-    const state = this.client.connectionState;
-    if (state === GatewayConnectionState.CONNECTED || state === GatewayConnectionState.CONNECTING ||
-      state === GatewayConnectionState.AUTHENTICATING) {
+    // A healthy link is never torn down: a network move fails it on its own and
+    // the failure path calls back here. A reconnect IN FLIGHT is fair game —
+    // that is exactly the case where the client is retrying the now-unreachable
+    // listener, and the switch has to win before the backoff timer fires.
+    if (this.client.connectionState === GatewayConnectionState.CONNECTED) {
       return;
     }
     const preferred = preferredEndpoint(this.savedEndpoints, this.network.hint());
     if (preferred.length === 0 || preferred === this.endpointCache) {
       return;
     }
+    hilog.info(0x0000, 'GatewayStore', 'auto endpoint switch: %{public}s -> %{public}s', this.endpointCache, preferred);
     this.autoSelecting = true;
     try {
       await this.switchEndpoint(preferred);
@@ -2334,6 +2344,13 @@ export class GatewayStore {
           this.publish();
         });
       }
+    } else if (this.autoSwitch &&
+      (kind === GatewayFailureKind.NETWORK || kind === GatewayFailureKind.UPGRADE_REJECTED)) {
+      // The transport died (Wi-Fi off, subnet change, radio loss): re-pick the
+      // address now, before the reconnect timer keeps hammering the old one.
+      // When the preferred address is already current this is a no-op, so a
+      // genuine auth failure cannot make it flap between addresses.
+      void this.maybeAutoSelect();
     }
     this.publish();
   }
