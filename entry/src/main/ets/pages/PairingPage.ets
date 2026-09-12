@@ -137,129 +137,139 @@ struct PairingPage {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        Text('在 WebUI「移动设备」中生成二维码后扫码，或粘贴配对内容（Base64URL）')
-          .fontSize(AppFont.CAPTION)
-          .fontColor(AppColors.MIST)
-          .width('100%')
-          .margin({ top: 10 })
+        // The header stays pinned; everything below it scrolls, so the saved
+        // connections added under 快捷重连 can never be clipped off-screen.
+        Scroll() {
+          Column({ space: AppSpacing.GAP }) {
+            Text('在 WebUI「移动设备」中生成二维码后扫码，或粘贴配对内容（Base64URL）')
+              .fontSize(AppFont.CAPTION)
+              .fontColor(AppColors.MIST)
+              .width('100%')
+              .margin({ top: 10 })
 
-        Column({ space: 12 }) {
-          Text('配对内容').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%')
-          TextArea({ placeholder: '粘贴 qrPayload（Base64URL）', text: this.payload })
-            .id('pairingPayload')
-            .height(120)
-            .width('100%')
-            .fontSize(AppFont.CAPTION)
-            .fontColor(AppColors.DARK_INK)
-            .placeholderColor(AppColors.INK_WEAK)
-            .backgroundColor(Glass.FILL_SUBTLE)
-            .borderRadius(AppRadius.INPUT)
-            .onChange((value: string) => {
-              this.payload = value;
-            })
-          Text('端点覆盖（可选）').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%')
-          TextInput({ placeholder: 'ws://10.0.2.2:3081/ws/mobile', text: this.endpoint })
-            .id('pairingEndpoint')
-            .width('100%')
-            .height(44)
-            .fontSize(AppFont.LABEL)
-            .fontColor(AppColors.DARK_INK)
-            .placeholderColor(AppColors.INK_WEAK)
-            .backgroundColor(Glass.FILL_SUBTLE)
-            .borderRadius(AppRadius.INPUT)
-            .onChange((value: string) => {
-              this.endpoint = value;
-            })
-        }
-        .width('100%')
-        .padding(14)
-        .backgroundColor(Glass.FILL)
-        .borderRadius(AppRadius.CARD)
-        .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER })
-        .backgroundBlurStyle(BlurStyle.COMPONENT_THICK, Glass.blurOptions())
-        .shadow(AppShadow.CARD)
-
-        if (this.error.length > 0) {
-          Text(this.error).fontSize(AppFont.CAPTION).fontColor(AppColors.DANGER).width('100%')
-        }
-        if (this.ui.failureDetail.length > 0) {
-          Text(this.ui.failureDetail).fontSize(AppFont.CAPTION).fontColor(AppColors.WARN).width('100%')
-        }
-        if (this.ui.notice.length > 0) {
-          Text(this.ui.notice)
-            .fontSize(AppFont.CAPTION)
-            .fontColor(this.ui.noticeIsError ? AppColors.WARN : AppColors.OK)
-            .width('100%')
-        }
-
-        Text('扫码').id('scanButton')
-          .fontSize(AppFont.LABEL).fontColor(AppColors.DARK_INK).textAlign(TextAlign.Center)
-          .width('100%').height(46)
-          .backgroundColor(Glass.FILL)
-          .borderRadius(AppRadius.CARD)
-          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-          .onClick(() => {
-            this.scan();
-          })
-
-        Text(this.busy ? '请稍候…' : '开始配对')
-          .id('pairButton')
-          .fontSize(AppFont.SUBTITLE)
-          .fontColor(this.busy ? AppColors.INK_WEAK : AppColors.PAPER)
-          .textAlign(TextAlign.Center)
-          .width('100%')
-          .height(52)
-          .backgroundColor(this.busy ? Glass.FILL_SUBTLE : '#F22E6BE6')
-          .borderRadius(AppRadius.CARD)
-          .border({ width: Glass.BORDER_WIDTH, color: '#66BFD6FF' })
-          .onClick(() => {
-            if (!this.busy) {
-              this.pair();
+            Column({ space: 12 }) {
+              Text('配对内容').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%')
+              TextArea({ placeholder: '粘贴 qrPayload（Base64URL）', text: this.payload })
+                .id('pairingPayload')
+                .height(120)
+                .width('100%')
+                .fontSize(AppFont.CAPTION)
+                .fontColor(AppColors.DARK_INK)
+                .placeholderColor(AppColors.INK_WEAK)
+                .backgroundColor(Glass.FILL_SUBTLE)
+                .borderRadius(AppRadius.INPUT)
+                .onChange((value: string) => {
+                  this.payload = value;
+                })
+              Text('端点覆盖（可选）').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%')
+              TextInput({ placeholder: 'ws://10.0.2.2:3081/ws/mobile', text: this.endpoint })
+                .id('pairingEndpoint')
+                .width('100%')
+                .height(44)
+                .fontSize(AppFont.LABEL)
+                .fontColor(AppColors.DARK_INK)
+                .placeholderColor(AppColors.INK_WEAK)
+                .backgroundColor(Glass.FILL_SUBTLE)
+                .borderRadius(AppRadius.INPUT)
+                .onChange((value: string) => {
+                  this.endpoint = value;
+                })
             }
-          })
-
-        // 快捷重连 / 断开：已有本地凭据时不必再扫码；断开只丢 socket、保留凭据。
-        Row({ space: 10 }) {
-          Text(this.busy ? '重连中…' : '快捷重新连接')
-            .id('reconnectButton')
-            .fontSize(AppFont.LABEL)
-            .fontColor(this.busy ? AppColors.INK_WEAK : AppColors.DARK_INK)
-            .textAlign(TextAlign.Center)
-            .layoutWeight(1)
-            .height(46)
-            .backgroundColor(this.busy ? Glass.FILL_SUBTLE : Glass.FILL)
-            .borderRadius(AppRadius.CARD)
-            .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-            .onClick(() => {
-              if (!this.busy) {
-                this.reconnect();
-              }
-            })
-          Text('断开连接')
-            .id('disconnectButton')
-            .fontSize(AppFont.LABEL)
-            .fontColor(this.ui.connection === 'connected' ? AppColors.DANGER : AppColors.INK_WEAK)
-            .textAlign(TextAlign.Center)
-            .layoutWeight(1)
-            .height(46)
+            .width('100%')
+            .padding(14)
             .backgroundColor(Glass.FILL)
             .borderRadius(AppRadius.CARD)
-            .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-            .onClick(() => {
-              this.disconnect();
-            })
-        }
-        .width('100%')
+            .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER })
+            .backgroundBlurStyle(BlurStyle.COMPONENT_THICK, Glass.blurOptions())
+            .shadow(AppShadow.CARD)
 
-        ConnectionPanel()
+            if (this.error.length > 0) {
+              Text(this.error).fontSize(AppFont.CAPTION).fontColor(AppColors.DANGER).width('100%')
+            }
+            if (this.ui.failureDetail.length > 0) {
+              Text(this.ui.failureDetail).fontSize(AppFont.CAPTION).fontColor(AppColors.WARN).width('100%')
+            }
+            if (this.ui.notice.length > 0) {
+              Text(this.ui.notice)
+                .fontSize(AppFont.CAPTION)
+                .fontColor(this.ui.noticeIsError ? AppColors.WARN : AppColors.OK)
+                .width('100%')
+            }
 
-        Text(`连接状态：${this.ui.connection} ${this.ui.connectionDetail}`)
-          .fontSize(AppFont.CAPTION)
-          .fontColor(AppColors.INK_WEAK)
+            Text('扫码').id('scanButton')
+              .fontSize(AppFont.LABEL).fontColor(AppColors.DARK_INK).textAlign(TextAlign.Center)
+              .width('100%').height(46)
+              .backgroundColor(Glass.FILL)
+              .borderRadius(AppRadius.CARD)
+              .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+              .onClick(() => {
+                this.scan();
+              })
+
+            Text(this.busy ? '请稍候…' : '开始配对')
+              .id('pairButton')
+              .fontSize(AppFont.SUBTITLE)
+              .fontColor(this.busy ? AppColors.INK_WEAK : AppColors.PAPER)
+              .textAlign(TextAlign.Center)
+              .width('100%')
+              .height(52)
+              .backgroundColor(this.busy ? Glass.FILL_SUBTLE : '#F22E6BE6')
+              .borderRadius(AppRadius.CARD)
+              .border({ width: Glass.BORDER_WIDTH, color: '#66BFD6FF' })
+              .onClick(() => {
+                if (!this.busy) {
+                  this.pair();
+                }
+              })
+
+            // 快捷重连 / 断开：已有本地凭据时不必再扫码；断开只丢 socket、保留凭据。
+            Row({ space: 10 }) {
+              Text(this.busy ? '重连中…' : '快捷重新连接')
+                .id('reconnectButton')
+                .fontSize(AppFont.LABEL)
+                .fontColor(this.busy ? AppColors.INK_WEAK : AppColors.DARK_INK)
+                .textAlign(TextAlign.Center)
+                .layoutWeight(1)
+                .height(46)
+                .backgroundColor(this.busy ? Glass.FILL_SUBTLE : Glass.FILL)
+                .borderRadius(AppRadius.CARD)
+                .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+                .onClick(() => {
+                  if (!this.busy) {
+                    this.reconnect();
+                  }
+                })
+              Text('断开连接')
+                .id('disconnectButton')
+                .fontSize(AppFont.LABEL)
+                .fontColor(this.ui.connection === 'connected' ? AppColors.DANGER : AppColors.INK_WEAK)
+                .textAlign(TextAlign.Center)
+                .layoutWeight(1)
+                .height(46)
+                .backgroundColor(Glass.FILL)
+                .borderRadius(AppRadius.CARD)
+                .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+                .onClick(() => {
+                  this.disconnect();
+                })
+            }
+            .width('100%')
+
+            ConnectionPanel()
+
+            Text(`连接状态：${this.ui.connection} ${this.ui.connectionDetail}`)
+              .fontSize(AppFont.CAPTION)
+              .fontColor(AppColors.INK_WEAK)
+              .width('100%')
+              .padding(12)
+              .backgroundColor(Glass.FILL_SUBTLE)
+              .borderRadius(AppRadius.INPUT)
+          }
           .width('100%')
-          .padding(12)
-          .backgroundColor(Glass.FILL_SUBTLE)
-          .borderRadius(AppRadius.INPUT)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .scrollBar(BarState.Off)
       }
       .width('100%')
       .height('100%')
