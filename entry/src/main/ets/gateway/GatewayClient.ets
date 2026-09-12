@@ -11,6 +11,7 @@
  */
 import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { buffer } from '@kit.ArkTS';
 import { GatewayLimits } from '../common/Constants';
 import { WireFrame } from '../protocol/Types';
@@ -74,6 +75,10 @@ class ChannelSocket {
     this.socket.on('open', (error: BusinessError, value: Object) => {
       void error;
       void value;
+      if (this.closed) {
+        // A replaced socket's late open must not drive the client.
+        return;
+      }
       this.opened = true;
       onOpen();
     });
@@ -169,6 +174,8 @@ export class GatewayClient {
   private capabilities: string[] = [];
   private reconnectAttempt: number = 0;
   private reconnectTimer: number = -1;
+  /** Armed while a control socket is AUTHENTICATING; fails a lost `hello`. */
+  private handshakeTimer: number = -1;
   private pingTimer: number = -1;
   private stopped: boolean = true;
   /** Reconnect attempts only run while the app is in the foreground. */
@@ -215,6 +222,7 @@ export class GatewayClient {
   private emitState(state: GatewayConnectionState, detail: string): void {
     this.state = state;
     this.lastDetail = detail;
+    hilog.info(0x0000, 'GatewayClient', 'state=%{public}s detail=%{public}s', state, detail);
     for (const listener of this.listeners) {
       listener.onState(state, detail);
     }
@@ -334,7 +342,16 @@ export class GatewayClient {
     this.control = control;
     control.attach((text: string) => this.handleFrame(ChannelLane.CONTROL, text),
       (detail: string, closeCode: number) => this.handleChannelFailure(ChannelLane.CONTROL, detail, closeCode),
-      () => this.emitState(GatewayConnectionState.AUTHENTICATING, '握手完成'));
+      () => {
+        // A `hello` can arrive before this open callback (the platform may
+        // dispatch the first message first). Never let a late open downgrade a
+        // live CONNECTED state back to AUTHENTICATING.
+        if (this.state !== GatewayConnectionState.CONNECTING) {
+          return;
+        }
+        this.emitState(GatewayConnectionState.AUTHENTICATING, '握手完成');
+        this.armHandshakeTimeout();
+      });
     control.open(credentials, 'control');
   }
 
@@ -360,11 +377,36 @@ export class GatewayClient {
     conversation.open(spec, 'conversation');
   }
 
+  /**
+   * A socket can open and then never deliver `hello` (a dropped frame, a proxy
+   * buffering the server push). Without a deadline the state would sit at
+   * AUTHENTICATING forever and never retry; fail the attempt so the normal
+   * backoff reconnect runs.
+   */
+  private armHandshakeTimeout(): void {
+    this.clearHandshakeTimeout();
+    this.handshakeTimer = setTimeout(() => {
+      this.handshakeTimer = -1;
+      if (this.state === GatewayConnectionState.AUTHENTICATING) {
+        const seconds = Math.round(GatewayLimits.CONNECT_TIMEOUT_MS / 1000);
+        this.handleChannelFailure(ChannelLane.CONTROL, `握手超时（${seconds}s）`, 0);
+      }
+    }, GatewayLimits.CONNECT_TIMEOUT_MS);
+  }
+
+  private clearHandshakeTimeout(): void {
+    if (this.handshakeTimer >= 0) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = -1;
+    }
+  }
+
   private teardown(): void {
     if (this.reconnectTimer >= 0) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = -1;
     }
+    this.clearHandshakeTimeout();
     if (this.pingTimer >= 0) {
       clearTimeout(this.pingTimer);
       this.pingTimer = -1;
@@ -486,6 +528,7 @@ export class GatewayClient {
       this.capabilities = Array.isArray(frame.capabilities) ? frame.capabilities : [];
       this.reconnectAttempt = 0;
       this.reconnectPending = false;
+      this.clearHandshakeTimeout();
       this.emitState(GatewayConnectionState.CONNECTED, `端口 ${frame.port ?? 0}`);
       if (this.capabilities.indexOf('split-channels') >= 0 && lane === ChannelLane.CONTROL) {
         this.openConversation();
