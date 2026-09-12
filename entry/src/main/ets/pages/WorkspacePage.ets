@@ -222,12 +222,9 @@ struct WorkspacePage {
       .alignItems(HorizontalAlign.Start)
       // Pairing entry on the home page: after 解除配对 the only other route to
       // the scanner is the launcher page, which a running app never shows again
-      // (B14), so the scan/pair action lives next to refresh.
+      // (B14), so the scan/pair action lives next to settings.
       this.glassCircle($r('sys.symbol.barcode_viewfinder'), () => {
         router.pushUrl({ url: 'pages/PairingPage' });
-      })
-      this.glassCircle($r('sys.symbol.arrow_counterclockwise'), () => {
-        this.reload();
       })
       this.glassCircle($r('sys.symbol.gearshape'), () => {
         router.pushUrl({ url: 'pages/SettingsPage' });
