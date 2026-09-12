@@ -149,6 +149,8 @@ export interface UiSnapshot {
   planReviewAvailable: boolean;
   /** True while the /plan-review pipeline is running. */
   planReviewRunning: boolean;
+  /** True while one /plan-toggle is in flight; the chip is disabled meanwhile. */
+  planToggleRunning: boolean;
   capabilities: string[];
   notice: string;
   noticeIsError: boolean;
@@ -237,6 +239,7 @@ export function emptyUiSnapshot(): UiSnapshot {
     planToggleCommand: '',
     planReviewAvailable: false,
     planReviewRunning: false,
+    planToggleRunning: false,
     capabilities: [],
     notice: '',
     noticeIsError: false,

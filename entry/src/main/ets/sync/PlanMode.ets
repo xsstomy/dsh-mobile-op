@@ -61,6 +61,20 @@ export function planTarget(plan: PlanModeRow | null): boolean {
   return plan.pending ? !plan.active : plan.active;
 }
 
+/**
+ * The locally intended row while a `/plan-toggle` waits for the host: the target
+ * state applied as an in-flight one, so the chip flips on the same frame as the
+ * tap instead of after a round trip. `pending` reuses the host's own in-flight
+ * meaning, which is what drives the `Plan…` label. `null` when the host
+ * publishes no projection: the caller must not guess a state it cannot render.
+ */
+export function planIntentRow(plan: PlanModeRow | null): PlanModeRow | null {
+  if (plan === null) {
+    return null;
+  }
+  return { active: planTarget(plan), pending: true };
+}
+
 /** True when the session's host command catalog contains `name`. */
 export function hasHostCommand(groups: CommandGroupRow[], name: string): boolean {
   for (const group of groups) {

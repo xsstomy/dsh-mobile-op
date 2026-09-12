@@ -59,7 +59,7 @@ import {
   removeSavedEndpoint, serializeSavedEndpoints, subnetProbeHosts, upsertSavedEndpoint
 } from '../sync/Endpoints';
 import { LanScanner } from '../gateway/LanScanner';
-import { PlanModeRow, hasHostCommand, planCommandNotice, planModeOf, planToggleCommand } from '../sync/PlanMode';
+import { PlanModeRow, hasHostCommand, planCommandNotice, planIntentRow, planModeOf, planToggleCommand } from '../sync/PlanMode';
 import {
   ApprovalResponsePayload, CommandExecutePayload, DirectoryCreatePayload, DirectoryListPayload, CommandQueryPayload, CommandSelectPayload, CommandsQueryPayload,
   GoalMutationPayload, GoalRef, HistoryPayload, MessagePayload, PermissionPayload, QuestionAnswerItem,
@@ -315,9 +315,24 @@ export class GatewayStore {
   private plan: PlanModeRow | null = null;
   /** asOfSeq of the applied plan projection; an older snapshot is ignored. */
   private planSeq: number = -1;
+  /**
+   * Local intent while `/plan-toggle` is in flight: it overrides the displayed
+   * plan so the chip flips on the tap frame, and is dropped as soon as the host
+   * reports a plan row (or the command failed). Only meaningful for the session
+   * it was set on — `resetPlan` clears it on every session switch.
+   */
+  private planLocalIntent: PlanModeRow | null = null;
+  /** `planSeq` the intent was derived from; only a newer host row may end it. */
+  private planIntentSeq: number = -1;
+  /** True while one /plan-toggle is in flight; disables the chip (no double flip). */
+  private planToggleRunning: boolean = false;
   /** /plan-review pipeline progress (driven by command/run + command/done). */
   private planReviewRunning: boolean = false;
   private planReviewCommandId: string = '';
+  /** In-flight `sessions` read, so overlapping refreshes share one round trip. */
+  private sessionsRefreshInFlight: Promise<void> | null = null;
+  /** A refresh arrived while one was in flight: run one more read when it settles. */
+  private sessionsRefreshQueued: boolean = false;
   /** Latest issued command, used to label the result text. */
   private recentCommandName: string = '';
   private recentCommandLine: string = '';
@@ -493,10 +508,13 @@ export class GatewayStore {
     snapshot.autoSwitch = this.autoSwitch;
     snapshot.endpointScanning = this.scanning;
     snapshot.networkAvailable = this.networkAvailable;
-    snapshot.plan = this.plan;
+    // The tap-time intent wins until the host confirms: it is dropped in
+    // `applyPlan` the moment a host row lands, so this never outlives one read.
+    snapshot.plan = this.planLocalIntent !== null ? this.planLocalIntent : this.plan;
     snapshot.planToggleCommand = planToggleCommand(this.commandGroups);
     snapshot.planReviewAvailable = hasHostCommand(this.commandGroups, 'plan-review');
     snapshot.planReviewRunning = this.planReviewRunning;
+    snapshot.planToggleRunning = this.planToggleRunning;
     snapshot.capabilities = this.status.capabilities;
     snapshot.notice = this.notice;
     snapshot.noticeIsError = this.noticeIsError;
@@ -1127,6 +1145,28 @@ export class GatewayStore {
   }
 
   async refreshSessions(): Promise<void> {
+    if (this.sessionsRefreshInFlight !== null) {
+      // One read already covers this request; queue a follow-up instead of
+      // dropping it (a session created behind the in-flight read must still
+      // land) and let both callers await the in-flight one.
+      this.sessionsRefreshQueued = true;
+      return this.sessionsRefreshInFlight;
+    }
+    const run = this.fetchSessions();
+    this.sessionsRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      this.sessionsRefreshInFlight = null;
+      if (this.sessionsRefreshQueued) {
+        this.sessionsRefreshQueued = false;
+        void this.refreshSessions();
+      }
+    }
+  }
+
+  /** The actual roster read; deduped by `refreshSessions`. */
+  private async fetchSessions(): Promise<void> {
     await this.withConnectRetry(async (): Promise<void> => {
       const frame = await this.client.request('sessions', new TypePayload('sessions'));
       const incoming = asSessionSummaries(frame);
@@ -1541,12 +1581,21 @@ export class GatewayStore {
     }
     this.plan = plan;
     this.planSeq = seq;
+    // Only a row newer than the one the intent was derived from may end it: a
+    // roster read that was already in flight before the command would otherwise
+    // drop the flip and show the pre-toggle state again.
+    if (this.planLocalIntent !== null && seq > this.planIntentSeq) {
+      this.planLocalIntent = null;
+    }
   }
 
   /** Drop per-session plan state (session switch / unpair). */
   private resetPlan(): void {
     this.plan = null;
     this.planSeq = -1;
+    this.planLocalIntent = null;
+    this.planIntentSeq = -1;
+    this.planToggleRunning = false;
     this.planReviewRunning = false;
     this.planReviewCommandId = '';
     this.recentCommandName = '';
@@ -1584,12 +1633,42 @@ export class GatewayStore {
    * Enter/leave plan mode through the plugin's /plan-toggle. The control is
    * hidden unless the plugin is installed (see planToggleCommand), so a host
    * without it never reaches this.
+   *
+   * The chip flips on this frame from the local intent, not from the round trip:
+   * through a public tunnel one exchange is ~1.3 s, and waiting for it made the
+   * tap feel unacknowledged. The host's own plan row (read back by the existing
+   * `afterCommand` / `command/done` refresh) supersedes the intent.
    */
   async togglePlanMode(): Promise<void> {
     if (planToggleCommand(this.commandGroups) !== 'plan-toggle') {
       return;
     }
-    await this.executeCommand('/plan-toggle');
+    if (this.planToggleRunning) {
+      return;
+    }
+    const intent = planIntentRow(this.plan);
+    if (intent === null) {
+      // The host publishes no plan projection, so the chip is not on screen and
+      // there is nothing to flip: still run the command and let the host side
+      // decide.
+      await this.executeCommand('/plan-toggle');
+      return;
+    }
+    this.planToggleRunning = true;
+    this.planLocalIntent = intent;
+    this.planIntentSeq = this.planSeq;
+    this.publish();
+    try {
+      // `executeCommand` reports failures through `commandOutcome` instead of
+      // throwing, so the revert has to read it.
+      await this.executeCommand('/plan-toggle');
+      if (this.commandOutcome !== null && this.commandOutcome.kind === 'error') {
+        this.planLocalIntent = null;
+      }
+    } finally {
+      this.planToggleRunning = false;
+      this.publish();
+    }
   }
 
   /** Run the plugin's review - archive - auto-execute pipeline. */

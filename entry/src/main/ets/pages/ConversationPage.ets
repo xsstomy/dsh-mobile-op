@@ -1489,9 +1489,9 @@ struct ConversationPage {
       .borderRadius(AppRadius.CIRCLE)
       .backgroundColor(this.planChipOn() ? AppColors.BRAND : Glass.FILL_STRONG)
       .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-      .opacity(this.ui.planReviewRunning ? 0.5 : 1)
+      .opacity(this.ui.planReviewRunning || this.ui.planToggleRunning ? 0.5 : 1)
       .onClick(() => {
-        if (!this.ui.planReviewRunning && !this.ui.busy) {
+        if (!this.ui.planReviewRunning && !this.ui.planToggleRunning && !this.ui.busy) {
           this.store.togglePlanMode();
         }
       })

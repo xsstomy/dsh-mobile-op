@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@ohos/hypium';
 import { CommandGroupRow, CommandItemRow } from '../main/ets/protocol/Settings';
-import { PlanModeRow, hasHostCommand, planCommandNotice, planModeOf, planTarget, planToggleCommand } from '../main/ets/sync/PlanMode';
+import { PlanModeRow, hasHostCommand, planCommandNotice, planIntentRow, planModeOf, planTarget, planToggleCommand } from '../main/ets/sync/PlanMode';
 
 function projected(plan: Object): Object {
   return { asOfSeq: 4, values: { plan } };
@@ -49,6 +49,36 @@ export default function planModeTest(): void {
       expect(planTarget({ active: false, pending: true })).assertTrue();
       expect(planTarget({ active: true, pending: true })).assertFalse();
       expect(planTarget(null)).assertFalse();
+    });
+
+    it('derives the tap-time intent from the projection', 0, () => {
+      // `planTarget` flips: a settled closed session targets closed again until
+      // the host publishes, so the intent keeps `active` equal to the fold.
+      const settledClosed = planIntentRow({ active: false, pending: false });
+      expect(settledClosed !== null).assertTrue();
+      if (settledClosed !== null) {
+        expect(settledClosed.active).assertFalse();
+        expect(settledClosed.pending).assertTrue();
+      }
+      const settledOpen = planIntentRow({ active: true, pending: false });
+      expect(settledOpen !== null).assertTrue();
+      if (settledOpen !== null) {
+        expect(settledOpen.active).assertTrue();
+        expect(settledOpen.pending).assertTrue();
+      }
+      // A projection that is already in flight folds the same way.
+      const inFlightOpen = planIntentRow({ active: false, pending: true });
+      if (inFlightOpen !== null) {
+        expect(inFlightOpen.active).assertTrue();
+        expect(inFlightOpen.pending).assertTrue();
+      }
+      const inFlightClosed = planIntentRow({ active: true, pending: true });
+      if (inFlightClosed !== null) {
+        expect(inFlightClosed.active).assertFalse();
+        expect(inFlightClosed.pending).assertTrue();
+      }
+      // No projection published: never guess a state the chip cannot render.
+      expect(planIntentRow(null) === null).assertTrue();
     });
 
     it('shows the Plan control only when the plugin is installed', 0, () => {
