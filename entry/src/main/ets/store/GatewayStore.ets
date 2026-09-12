@@ -59,7 +59,7 @@ import {
   removeSavedEndpoint, serializeSavedEndpoints, subnetProbeHosts, upsertSavedEndpoint
 } from '../sync/Endpoints';
 import { LanScanner } from '../gateway/LanScanner';
-import { PlanModeRow, hasHostCommand, planCommandNotice, planModeOf, planTarget, planToggleCommand } from '../sync/PlanMode';
+import { PlanModeRow, hasHostCommand, planCommandNotice, planModeOf, planToggleCommand } from '../sync/PlanMode';
 import {
   ApprovalResponsePayload, CommandExecutePayload, DirectoryCreatePayload, DirectoryListPayload, CommandQueryPayload, CommandSelectPayload, CommandsQueryPayload,
   GoalMutationPayload, GoalRef, HistoryPayload, MessagePayload, PermissionPayload, QuestionAnswerItem,
@@ -1581,19 +1581,15 @@ export class GatewayStore {
   }
 
   /**
-   * Enter/leave plan mode. The plugin's /plan-toggle is preferred because its
-   * review pipeline gates on the mode that command writes; the official
-   * /plan and /plan off are the fallback when the plugin is absent.
+   * Enter/leave plan mode through the plugin's /plan-toggle. The control is
+   * hidden unless the plugin is installed (see planToggleCommand), so a host
+   * without it never reaches this.
    */
   async togglePlanMode(): Promise<void> {
-    const command = planToggleCommand(this.commandGroups);
-    if (command.length === 0) {
+    if (planToggleCommand(this.commandGroups) !== 'plan-toggle') {
       return;
     }
-    const line = command === 'plan-toggle'
-      ? '/plan-toggle'
-      : (planTarget(this.plan) ? '/plan off' : '/plan');
-    await this.executeCommand(line);
+    await this.executeCommand('/plan-toggle');
   }
 
   /** Run the plugin's review - archive - auto-execute pipeline. */

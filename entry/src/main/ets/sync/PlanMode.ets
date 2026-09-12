@@ -6,10 +6,10 @@
  * exactly this projection, and the effective target uses the same fold as the
  * official Web chip (`pending ? !active : active`).
  *
- * The toggle itself runs the plugin's `/plan-toggle` command, not the official
- * `/plan`: the plugin's review pipeline gates on its own in-memory mode, which
- * only `/plan-toggle` writes. When the plugin is absent the caller falls back to
- * the official `/plan` / `/plan off`.
+ * The Plan control exists only when the dsh-plan-toggle plugin is installed:
+ * the toggle runs its `/plan-toggle` command, and the plugin's review pipeline
+ * gates on its own in-memory mode, which only that command writes. A host that
+ * merely offers the official `/plan` (core plan-mode) gets no Plan control.
  */
 import { CommandGroupRow } from '../protocol/Settings';
 
@@ -74,14 +74,13 @@ export function hasHostCommand(groups: CommandGroupRow[], name: string): boolean
 }
 
 /**
- * Which command the Plan control should run: the plugin's `plan-toggle` when
- * installed, else the official `plan`. '' means the host offers neither.
+ * The command behind the Plan control, or '' to hide it. Only the plugin's
+ * `plan-toggle` qualifies: a host that just offers the official `plan` command
+ * still gets no control, because the hard sandbox gate and the review pipeline
+ * only exist when the plugin is installed.
  */
 export function planToggleCommand(groups: CommandGroupRow[]): string {
-  if (hasHostCommand(groups, 'plan-toggle')) {
-    return 'plan-toggle';
-  }
-  return hasHostCommand(groups, 'plan') ? 'plan' : '';
+  return hasHostCommand(groups, 'plan-toggle') ? 'plan-toggle' : '';
 }
 /** The plugin writes its result for a keyboard; those sentences are useless on a phone. */
 function withoutKeyboardHints(text: string): string {
@@ -111,6 +110,11 @@ export function planCommandNotice(commandName: string, kind: string, text: strin
     return base.length > 0 ? base : text;
   }
   if (commandName === 'plan-review') {
+    return base;
+  }
+  // Only the plugin's toggle owns the on-screen controls; the official /plan
+  // can run while no Plan chip is on screen, so it never points at one.
+  if (commandName === 'plan') {
     return base;
   }
   const opened = text.indexOf('已开启') >= 0;

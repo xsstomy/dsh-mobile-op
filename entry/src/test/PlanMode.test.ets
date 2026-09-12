@@ -51,9 +51,9 @@ export default function planModeTest(): void {
       expect(planTarget(null)).assertFalse();
     });
 
-    it('prefers the plugin toggle, else the official plan command', 0, () => {
+    it('shows the Plan control only when the plugin is installed', 0, () => {
       expect(planToggleCommand(groupsOf(['plan-toggle', 'plan-review'], 'host'))).assertEqual('plan-toggle');
-      expect(planToggleCommand(groupsOf(['plan'], 'host'))).assertEqual('plan');
+      expect(planToggleCommand(groupsOf(['plan'], 'host'))).assertEqual('');
       expect(planToggleCommand(groupsOf(['plan-toggle'], 'client'))).assertEqual('');
       expect(planToggleCommand([])).assertEqual('');
     });
@@ -74,6 +74,10 @@ export default function planModeTest(): void {
       const review = planCommandNotice('plan-review', 'success', '复核完成：2 条发现 → 已归档 docs/plans/x.md → 执行轮已启动。');
       expect(review.indexOf('复核完成') >= 0).assertTrue();
       expect(planCommandNotice('compact', 'success', '压缩完成')).assertEqual('压缩完成');
+      // The official /plan can run with no Plan chip on screen, so it never
+      // points at the hidden controls.
+      const official = planCommandNotice('plan', 'success', 'Plan mode on. Use /plan off to leave.');
+      expect(official.indexOf('用下方的 Plan')).assertEqual(-1);
     });
   });
 }

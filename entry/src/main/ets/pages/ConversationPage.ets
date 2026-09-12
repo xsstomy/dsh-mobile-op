@@ -1456,6 +1456,15 @@ struct ConversationPage {
     return planTarget(this.ui.plan);
   }
 
+  /**
+   * The Plan control exists only with the dsh-plan-toggle plugin. The host
+   * projection must also be present (a custom preset can ship without
+   * plan-mode), so both checks gate the chip and the review button.
+   */
+  private planUiVisible(): boolean {
+    return this.ui.planToggleCommand.length > 0 && this.ui.plan !== null;
+  }
+
   private planChipLabel(): string {
     if (this.ui.plan !== null && this.ui.plan.pending) {
       return 'Plan…';
@@ -1466,7 +1475,7 @@ struct ConversationPage {
   /** Plan-mode chip: reads the host projection, toggles through the host command. */
   @Builder
   planChip() {
-    if (this.ui.planToggleCommand.length > 0 && this.ui.plan !== null) {
+    if (this.planUiVisible()) {
       Stack() {
         Text(this.planChipLabel())
           .fontSize(AppFont.BADGE)
@@ -1497,7 +1506,7 @@ struct ConversationPage {
   /** Alt+2 on the phone: the /plan-review pipeline as a visible button. */
   @Builder
   planReviewButton() {
-    if (this.planChipOn() && this.ui.planReviewAvailable) {
+    if (this.planUiVisible() && this.planChipOn() && this.ui.planReviewAvailable) {
       Stack() {
         Text('复核')
           .fontSize(AppFont.BADGE)
@@ -1725,7 +1734,7 @@ struct ConversationPage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-      if (this.planChipOn() && this.ui.planReviewAvailable &&
+      if (this.planUiVisible() && this.planChipOn() && this.ui.planReviewAvailable &&
         !this.planReviewActionable() && !this.ui.planReviewRunning) {
         Text('生成中：等这一轮跑完再复核')
           .fontSize(10)

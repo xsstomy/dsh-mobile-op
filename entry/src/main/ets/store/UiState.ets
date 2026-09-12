@@ -143,7 +143,7 @@ export interface UiSnapshot {
   networkAvailable: boolean;
   /** Host `plan` projection for the active session (null when unpublished). */
   plan: PlanModeRow | null;
-  /** `plan-toggle` when the plugin is installed, else `plan`; '' hides the control. */
+  /** `plan-toggle` when the plugin is installed; '' hides the whole Plan control. */
   planToggleCommand: string;
   /** True when the host catalog has the plugin's /plan-review command. */
   planReviewAvailable: boolean;
