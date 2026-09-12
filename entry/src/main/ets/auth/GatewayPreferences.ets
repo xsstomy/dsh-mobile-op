@@ -17,6 +17,8 @@ const KEY_ENDPOINT_RECORDS = 'endpointRecords';
 const KEY_AUTO_SWITCH = 'autoSwitch';
 const KEY_THEME_MODE = 'themeMode';
 const KEY_SHOW_REASONING = 'showReasoning';
+const KEY_SHOW_SLASH_SHORTCUT = 'showSlashShortcut';
+const KEY_SHOW_MENTION_SHORTCUT = 'showMentionShortcut';
 
 export class GatewayPreferences {
   private static instance: GatewayPreferences | undefined;
@@ -155,6 +157,26 @@ export class GatewayPreferences {
 
   async setShowReasoning(value: boolean): Promise<void> {
     await this.put(KEY_SHOW_REASONING, value ? '1' : '0');
+  }
+
+  /**
+   * Whether the composer shows its quick-insert buttons. Both default ON so an
+   * existing install keeps the buttons it already had.
+   */
+  async showSlashShortcut(): Promise<boolean> {
+    return (await this.getString(KEY_SHOW_SLASH_SHORTCUT, '1')) === '1';
+  }
+
+  async setShowSlashShortcut(value: boolean): Promise<void> {
+    await this.put(KEY_SHOW_SLASH_SHORTCUT, value ? '1' : '0');
+  }
+
+  async showMentionShortcut(): Promise<boolean> {
+    return (await this.getString(KEY_SHOW_MENTION_SHORTCUT, '1')) === '1';
+  }
+
+  async setShowMentionShortcut(value: boolean): Promise<void> {
+    await this.put(KEY_SHOW_MENTION_SHORTCUT, value ? '1' : '0');
   }
 
   async lastSessionId(): Promise<string> {

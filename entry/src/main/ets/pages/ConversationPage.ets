@@ -882,6 +882,17 @@ struct ConversationPage {
       this.settingRow('权限', () => this.permissionLabel(), () => {
         this.openPicker('permission', '会话权限');
       })
+      Text('输入框快捷键').fontSize(AppFont.CAPTION).fontColor(AppColors.INK_WEAK).width('100%').padding({ top: 4 })
+      this.shortcutToggle('显示 / 指令按钮', () => this.ui.showSlashShortcut, (on: boolean) => {
+        this.store.setShowSlashShortcut(on).catch((failure: Error) => {
+          this.error = failure.message;
+        });
+      })
+      this.shortcutToggle('显示 @ 文件按钮', () => this.ui.showMentionShortcut, (on: boolean) => {
+        this.store.setShowMentionShortcut(on).catch((failure: Error) => {
+          this.error = failure.message;
+        });
+      })
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -1064,12 +1075,6 @@ struct ConversationPage {
         this.menuAction('任务与目标', false, () => {
           this.openSheet('panel');
         })
-        if (this.ui.planReviewAvailable && this.planChipOn()) {
-          this.menuAction('复核并执行（plan-review）', false, () => {
-            this.sheetOpen = false;
-            this.store.runPlanReview();
-          })
-        }
         this.menuAction('工作区文件', false, () => {
           this.sheetOpen = false;
           router.pushUrl({ url: 'pages/WorkspaceFilesPage' });
@@ -1467,7 +1472,7 @@ struct ConversationPage {
         .fontSize(AppFont.CAPTION)
         .fontColor(this.planChipOn() ? AppColors.PAPER : AppColors.DARK_INK)
         .textAlign(TextAlign.Center)
-        .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
         .backgroundColor(this.planChipOn() ? AppColors.BRAND : Glass.FILL_STRONG)
         .borderRadius(AppRadius.PILL)
         .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
@@ -1478,6 +1483,48 @@ struct ConversationPage {
           }
         })
     }
+  }
+
+  /** The review pipeline needs an idle agent; the plugin also rejects a busy one. */
+  private planReviewActionable(): boolean {
+    return !this.ui.turnActive && !this.ui.planReviewRunning;
+  }
+
+  /** Alt+2 on the phone: the /plan-review pipeline as a visible button. */
+  @Builder
+  planReviewButton() {
+    if (this.planChipOn() && this.ui.planReviewAvailable) {
+      Text(this.ui.planReviewRunning ? '复核中' : '复核')
+        .id('planReviewButton')
+        .fontSize(AppFont.CAPTION)
+        .fontColor(AppColors.DARK_INK)
+        .textAlign(TextAlign.Center)
+        .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+        .backgroundColor(Glass.FILL_STRONG)
+        .borderRadius(AppRadius.PILL)
+        .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+        .opacity(this.planReviewActionable() ? 1 : 0.4)
+        .onClick(() => {
+          if (this.planReviewActionable()) {
+            this.store.runPlanReview();
+          }
+        })
+    }
+  }
+
+  /** A labelled switch row for the composer quick-insert preferences. */
+  @Builder
+  shortcutToggle(label: string, isOn: () => boolean, action: (on: boolean) => void) {
+    Row({ space: 8 }) {
+      Text(label).fontSize(AppFont.LABEL).fontColor(AppColors.DARK_INK).layoutWeight(1)
+      Toggle({ type: ToggleType.Switch, isOn: isOn() })
+        .selectedColor(AppColors.OK)
+        .onChange((value: boolean) => {
+          action(value);
+        })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -1581,7 +1628,7 @@ struct ConversationPage {
 
       this.balanceLine()
 
-      Row({ space: 10 }) {
+      Row({ space: 8 }) {
         Stack() {
           SymbolGlyph($r('sys.symbol.ohos_photo')).fontSize(16).fontColor([AppColors.DARK_INK])
         }
@@ -1600,34 +1647,39 @@ struct ConversationPage {
         // three of them live behind one gear button on the composer action row.
         this.settingsButton()
         this.planChip()
+        this.planReviewButton()
         // Quick-insert shortcuts: tapping `/` or `@` splices the symbol at the
         // caret and opens the same command / file menus the keyboard would.
-        Text('/')
-          .id('slashShortcut')
-          .fontSize(AppFont.SUBTITLE)
-          .fontColor(AppColors.DARK_INK)
-          .textAlign(TextAlign.Center)
-          .width(34)
-          .height(34)
-          .backgroundColor(Glass.FILL_STRONG)
-          .borderRadius(AppRadius.CIRCLE)
-          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-          .onClick(() => {
-            this.insertComposerToken('/');
-          })
-        Text('@')
-          .id('mentionShortcut')
-          .fontSize(AppFont.SUBTITLE)
-          .fontColor(AppColors.DARK_INK)
-          .textAlign(TextAlign.Center)
-          .width(34)
-          .height(34)
-          .backgroundColor(Glass.FILL_STRONG)
-          .borderRadius(AppRadius.CIRCLE)
-          .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
-          .onClick(() => {
-            this.insertComposerToken('@');
-          })
+        if (this.ui.showSlashShortcut) {
+          Text('/')
+            .id('slashShortcut')
+            .fontSize(AppFont.SUBTITLE)
+            .fontColor(AppColors.DARK_INK)
+            .textAlign(TextAlign.Center)
+            .width(34)
+            .height(34)
+            .backgroundColor(Glass.FILL_STRONG)
+            .borderRadius(AppRadius.CIRCLE)
+            .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+            .onClick(() => {
+              this.insertComposerToken('/');
+            })
+        }
+        if (this.ui.showMentionShortcut) {
+          Text('@')
+            .id('mentionShortcut')
+            .fontSize(AppFont.SUBTITLE)
+            .fontColor(AppColors.DARK_INK)
+            .textAlign(TextAlign.Center)
+            .width(34)
+            .height(34)
+            .backgroundColor(Glass.FILL_STRONG)
+            .borderRadius(AppRadius.CIRCLE)
+            .border({ width: Glass.BORDER_WIDTH, color: Glass.BORDER_SOFT })
+            .onClick(() => {
+              this.insertComposerToken('@');
+            })
+        }
         // The queue/steer delimiter only means something while a turn is running
         // (when idle both modes deliver a plain message), so it stays hidden
         // until then — same as DSH, which names the mode on the send button only
@@ -1665,6 +1717,13 @@ struct ConversationPage {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+      if (this.planChipOn() && this.ui.planReviewAvailable &&
+        !this.planReviewActionable() && !this.ui.planReviewRunning) {
+        Text('生成中：等这一轮跑完再复核')
+          .fontSize(10)
+          .fontColor(AppColors.INK_WEAK)
+          .width('100%')
+      }
     }
     .width('100%')
     .padding({ left: 14, right: 14, top: 12, bottom: 12 })

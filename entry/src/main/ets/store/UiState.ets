@@ -204,6 +204,10 @@ export interface UiSnapshot {
   themeMode: string;
   /** Render the agent's reasoning inside the conversation (device-local, default off). */
   showReasoning: boolean;
+  /** Show the slash quick-insert button on the composer (device-local, default on). */
+  showSlashShortcut: boolean;
+  /** Show the mention quick-insert button on the composer (device-local, default on). */
+  showMentionShortcut: boolean;
   /** True while the selected session has a turn in flight (drives the thinking indicator). */
   turnActive: boolean;
   /** Epoch ms the active turn started; 0 = running but start unknown. */
@@ -285,6 +289,8 @@ export function emptyUiSnapshot(): UiSnapshot {
     searchError: '',
     themeMode: 'system',
     showReasoning: false,
+    showSlashShortcut: true,
+    showMentionShortcut: true,
     turnActive: false,
     turnStartedAt: 0,
     backgroundTaskActive: false

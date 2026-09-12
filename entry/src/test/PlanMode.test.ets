@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@ohos/hypium';
 import { CommandGroupRow, CommandItemRow } from '../main/ets/protocol/Settings';
-import { PlanModeRow, hasHostCommand, planModeOf, planTarget, planToggleCommand } from '../main/ets/sync/PlanMode';
+import { PlanModeRow, hasHostCommand, planCommandNotice, planModeOf, planTarget, planToggleCommand } from '../main/ets/sync/PlanMode';
 
 function projected(plan: Object): Object {
   return { asOfSeq: 4, values: { plan } };
@@ -62,6 +62,18 @@ export default function planModeTest(): void {
       expect(hasHostCommand(groupsOf(['plan-review'], 'host'), 'plan-review')).assertTrue();
       expect(hasHostCommand(groupsOf(['plan-review'], 'client'), 'plan-review')).assertFalse();
       expect(hasHostCommand(groupsOf(['plan'], 'host'), 'plan-review')).assertFalse();
+    });
+
+    it('rewrites the plan result for the phone', 0, () => {
+      const open = planCommandNotice('plan-toggle', 'success',
+        'plan 模式已开启（committed）；沙箱已切只读（预设 read-only）。先聊清楚需求，然后按 Alt+2 复核并执行；再按 Alt+1 退出。');
+      expect(open.indexOf('Alt+')).assertEqual(-1);
+      expect(open.indexOf('Plan 关闭') >= 0).assertTrue();
+      const close = planCommandNotice('plan-toggle', 'success', 'plan 模式已关闭（committed），流水线状态已清空。');
+      expect(close.indexOf('写权限已还原') >= 0).assertTrue();
+      const review = planCommandNotice('plan-review', 'success', '复核完成：2 条发现 → 已归档 docs/plans/x.md → 执行轮已启动。');
+      expect(review.indexOf('复核完成') >= 0).assertTrue();
+      expect(planCommandNotice('compact', 'success', '压缩完成')).assertEqual('压缩完成');
     });
   });
 }

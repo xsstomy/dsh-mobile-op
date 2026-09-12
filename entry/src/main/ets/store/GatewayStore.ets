@@ -59,7 +59,7 @@ import {
   removeSavedEndpoint, serializeSavedEndpoints, subnetProbeHosts, upsertSavedEndpoint
 } from '../sync/Endpoints';
 import { LanScanner } from '../gateway/LanScanner';
-import { PlanModeRow, hasHostCommand, planModeOf, planTarget, planToggleCommand } from '../sync/PlanMode';
+import { PlanModeRow, hasHostCommand, planCommandNotice, planModeOf, planTarget, planToggleCommand } from '../sync/PlanMode';
 import {
   ApprovalResponsePayload, CommandExecutePayload, DirectoryCreatePayload, DirectoryListPayload, CommandQueryPayload, CommandSelectPayload, CommandsQueryPayload,
   GoalMutationPayload, GoalRef, HistoryPayload, MessagePayload, PermissionPayload, QuestionAnswerItem,
@@ -321,6 +321,9 @@ export class GatewayStore {
   /** Latest issued command, used to label the result text. */
   private recentCommandName: string = '';
   private recentCommandLine: string = '';
+  /** Composer quick-insert visibility (device-local, default on). */
+  private showSlashShortcut: boolean = true;
+  private showMentionShortcut: boolean = true;
 
   static get current(): GatewayStore {
     if (GatewayStore.instance === undefined) {
@@ -349,6 +352,19 @@ export class GatewayStore {
   async setShowReasoning(value: boolean): Promise<void> {
     this.showReasoning = value;
     await this.preferences?.setShowReasoning(value);
+    this.publish();
+  }
+
+  /** Composer quick-insert visibility; device-local and persisted. */
+  async setShowSlashShortcut(value: boolean): Promise<void> {
+    this.showSlashShortcut = value;
+    await this.preferences?.setShowSlashShortcut(value);
+    this.publish();
+  }
+
+  async setShowMentionShortcut(value: boolean): Promise<void> {
+    this.showMentionShortcut = value;
+    await this.preferences?.setShowMentionShortcut(value);
     this.publish();
   }
 
@@ -550,6 +566,8 @@ export class GatewayStore {
     snapshot.searchError = this.searchError;
     snapshot.themeMode = this.themeMode;
     snapshot.showReasoning = this.showReasoning;
+    snapshot.showSlashShortcut = this.showSlashShortcut;
+    snapshot.showMentionShortcut = this.showMentionShortcut;
     snapshot.turnActive = this.turnActivity.active;
     snapshot.turnStartedAt = this.turnActivity.startedAt;
     snapshot.backgroundTaskActive = this.backgroundTask.isRunning;
@@ -606,6 +624,8 @@ export class GatewayStore {
     this.deepSeekKey = await this.deepSeekKeys.load();
     this.themeMode = await this.preferences.themeMode();
     this.showReasoning = await this.preferences.showReasoning();
+    this.showSlashShortcut = await this.preferences.showSlashShortcut();
+    this.showMentionShortcut = await this.preferences.showMentionShortcut();
     this.applyAppColorMode(this.themeMode);
     this.selectedWorkspaceId = await this.preferences.workspaceId();
     this.selectedSessionId = await this.preferences.lastSessionId();
@@ -1488,16 +1508,22 @@ export class GatewayStore {
         return;
       }
       const result = frame.result;
+      const kind = result === undefined ? 'success' : (result.kind ?? 'success');
+      const text = result === undefined ? '' : (result.text ?? '');
       this.commandOutcome = {
         line: line,
-        kind: result === undefined ? 'success' : (result.kind ?? 'success'),
-        text: result === undefined ? '' : (result.text ?? '')
+        kind: kind,
+        text: planCommandNotice(this.recentCommandName, kind, text)
       };
     } catch (failure) {
       if (this.selectedSessionId !== sessionId) {
         return;
       }
-      this.commandOutcome = { line: line, kind: 'error', text: (failure as Error).message };
+      this.commandOutcome = {
+        line: line,
+        kind: 'error',
+        text: planCommandNotice(this.recentCommandName, 'error', (failure as Error).message)
+      };
     }
     this.publish();
     this.afterCommand();
@@ -2545,10 +2571,12 @@ export class GatewayStore {
           this.planReviewRunning = false;
           this.planReviewCommandId = '';
           if (sessionId === this.selectedSessionId) {
+            const doneKind = typeof event.outcome === 'string' ? event.outcome : 'success';
+            const doneText = typeof event.text === 'string' ? event.text : '';
             this.commandOutcome = {
               line: this.recentCommandLine,
-              kind: typeof event.outcome === 'string' ? event.outcome : 'success',
-              text: typeof event.text === 'string' ? event.text : ''
+              kind: doneKind,
+              text: planCommandNotice(this.recentCommandName, doneKind, doneText)
             };
           }
         }

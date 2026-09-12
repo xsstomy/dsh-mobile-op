@@ -83,3 +83,39 @@ export function planToggleCommand(groups: CommandGroupRow[]): string {
   }
   return hasHostCommand(groups, 'plan') ? 'plan' : '';
 }
+/** The plugin writes its result for a keyboard; those sentences are useless on a phone. */
+function withoutKeyboardHints(text: string): string {
+  const kept: string[] = [];
+  for (const sentence of text.split('。')) {
+    const trimmed = sentence.trim();
+    if (trimmed.length === 0 || trimmed.indexOf('Alt+') >= 0) {
+      continue;
+    }
+    kept.push(trimmed);
+  }
+  return kept.join('。');
+}
+
+/**
+ * Rewrite a plan command result for the phone. The host names Alt+1/Alt+2, but
+ * the phone has the Plan chip and the review button instead, so drop those
+ * sentences and append the on-screen guidance the user can actually act on.
+ * Any other command's text is returned untouched.
+ */
+export function planCommandNotice(commandName: string, kind: string, text: string): string {
+  if (commandName !== 'plan' && commandName !== 'plan-toggle' && commandName !== 'plan-review') {
+    return text;
+  }
+  const base = withoutKeyboardHints(text);
+  if (kind === 'error') {
+    return base.length > 0 ? base : text;
+  }
+  if (commandName === 'plan-review') {
+    return base;
+  }
+  const opened = text.indexOf('已开启') >= 0;
+  const hint = opened
+    ? '用下方的 Plan 关闭；plan 模式下点 Plan 旁边的「复核」跑流水线'
+    : '写权限已还原';
+  return base.length > 0 ? base + '。' + hint : hint;
+}
