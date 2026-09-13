@@ -260,10 +260,14 @@ export function fallbackResponseKindFor(
     return '';
   }
   if (kind === 'error' && requestType.length > 0) {
-    // Gateway error frames name a requestType but carry no sessionId (measured
-    // for tasks/goal/session-stats failures). Such a frame cannot be attributed
-    // to one session, so no session-scoped lane may be settled from it.
-    return '';
+    // Measured on a real device: a failed session-scoped request comes back as
+    // `error` carrying a requestType but NO sessionId (history, models), while
+    // some families (commands) do echo the session. Without this branch the
+    // flight is never settled and the caller reports a 30 s "请求超时" for an
+    // error the host had returned in ~30 ms. Only the oldest lane of that exact
+    // request type may be settled, so this cannot bleed another session's
+    // transcript the way a blanket kind match would.
+    return responseKindFor(requestType);
   }
   return kind === 'error' ? responseKindFor(requestType) : kind;
 }

@@ -243,9 +243,14 @@ export default function requestTrackerTest(): void {
       // A labeled reply belongs to exactly one lane: no global fallback at all.
       expect(fallbackResponseKindFor('history', '', 'session-a', '')).assertEqual('');
       expect(fallbackResponseKindFor('history', 'r1', '', '')).assertEqual('');
-      // A session-less error that names a requestType cannot be attributed to a
-      // session, so it must not settle a session-scoped lane either.
-      expect(fallbackResponseKindFor('error', '', '', 'history')).assertEqual('');
+      // A session-less error names its requestType and nothing else (measured:
+      // the host answers a failed history/models call in ~30 ms with
+      // `{kind:error, requestType, code}` and NO sessionId). It must still settle
+      // the oldest lane of that exact request type, or the caller sits on a 30 s
+      // "请求超时" for an error that had already arrived.
+      expect(fallbackResponseKindFor('error', '', '', 'history')).assertEqual('history');
+      expect(fallbackResponseKindFor('error', '', '', 'models')).assertEqual('models');
+      // Without a requestType there is nothing to attribute it to.
       expect(fallbackResponseKindFor('error', '', '', '')).assertEqual('');
       // The measured session-less replies keep the oldest-first fallback.
       expect(fallbackResponseKindFor('models', '', '', '')).assertEqual('models');
