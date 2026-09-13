@@ -25,6 +25,10 @@ export interface WireSessionSummary {
   blank?: boolean;
   cwd?: string;
   agentPreset?: string;
+  /** `subagent` for a session a subagent ran in; absent for top-level ones. */
+  origin?: string;
+  /** Set on subagent rows: the top-level session they ran for. */
+  parentSessionId?: string;
   /** Projection snapshot (`asOfSeq` + `values`), present on `sessions` rows. */
   projections?: Object;
 }

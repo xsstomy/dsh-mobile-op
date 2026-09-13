@@ -211,6 +211,53 @@ export function mergeSessionRows(
  * that no workspace owns. A session owned by a *different* workspace still
  * stays out, so switching the workspace keeps scoping the list.
  */
+/**
+ * Whether a roster row belongs in the session list the user sees.
+ *
+ * A subagent runs its own session, and the host marks those rows with
+ * `origin: 'subagent'` plus the `parentSessionId` they belong to. They are not
+ * conversations the user opened, and the host refuses to serve their history
+ * (`session/agent-busy`), so listing them only produces dead entries.
+ */
+export function isTopLevelSession(session: WireSessionSummary): boolean {
+  if (session.origin === 'subagent') {
+    return false;
+  }
+  const parent = session.parentSessionId ?? '';
+  return parent.length === 0;
+}
+
+/**
+ * Count the sessions a workspace tile should advertise.
+ *
+ * `workspace.sessionIds` lists every session the host attached, subagent sessions
+ * included, but the roster hides those (see `isTopLevelSession`) — the tile must
+ * count what the user can actually open, or the list and the badge disagree.
+ * Ids the host did not attach to this workspace are left uncounted here; the
+ * roster's ungrouped rule is applied when a session has no workspace at all.
+ */
+export function visibleSessionCount(
+  sessionIds: string[], rows: WireSessionSummary[], archived: string[]
+): number {
+  let count = 0;
+  for (const sessionId of sessionIds) {
+    if (sessionId.length === 0 || archived.indexOf(sessionId) >= 0) {
+      continue;
+    }
+    let known: WireSessionSummary | undefined = undefined;
+    for (const row of rows) {
+      if ((row.sessionId ?? '') === sessionId) {
+        known = row;
+        break;
+      }
+    }
+    if (known === undefined || isTopLevelSession(known)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function rosterIncludesSession(
   workspaces: WireWorkspace[], selectedWorkspaceId: string, sessionId: string
 ): boolean {

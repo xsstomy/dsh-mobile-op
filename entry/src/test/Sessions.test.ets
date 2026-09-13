@@ -8,7 +8,8 @@
 import { describe, expect, it } from '@ohos/hypium';
 import {
   applyEventToRoster, applySessionTitle, applySummaryTitles, displayTitleOf, mergeSessionRows,
-  nextTitleSeq, projectedTitleOf, projectionsSeqOf, rosterIncludesSession, SessionTitle
+  nextTitleSeq, projectedTitleOf, projectionsSeqOf, rosterIncludesSession, isTopLevelSession, SessionTitle,
+  visibleSessionCount
 } from '../main/ets/sync/Sessions';
 import { WireSessionSummary, WireWorkspace } from '../main/ets/protocol/Types';
 import { asSessionSummaries, decodeFrame } from '../main/ets/protocol/WireDecoder';
@@ -156,6 +157,32 @@ export default function sessionsTest(): void {
       expect(rosterIncludesSession(workspaces, 'gone', 's3')).assertTrue();
       // A workspace with no ids listed never filters.
       expect(rosterIncludesSession([{ workspaceId: 'w1' }], 'w1', 'anything')).assertTrue();
+    });
+
+    it('keeps subagent sessions out of the roster', 0, () => {
+      // The host marks a subagent's own session; the gateway forwards both fields.
+      expect(isTopLevelSession({ sessionId: 'session-a' })).assertTrue();
+      expect(isTopLevelSession({ sessionId: 'child', origin: 'subagent' })).assertFalse();
+      expect(isTopLevelSession({ sessionId: 'child', parentSessionId: 'session-a' })).assertFalse();
+      // Either marker alone is enough, and an unrelated origin still counts as
+      // top-level (only the measured 'subagent' value means "not a conversation").
+      expect(isTopLevelSession({ sessionId: 'child', origin: 'subagent', parentSessionId: 'session-a' })).assertFalse();
+      expect(isTopLevelSession({ sessionId: 'session-b', origin: 'user' })).assertTrue();
+    });
+
+    it('counts only the sessions a workspace tile can actually open', 0, () => {
+      const rows: WireSessionSummary[] = [
+        { sessionId: 'session-a' },
+        { sessionId: 'child', origin: 'subagent', parentSessionId: 'session-a' },
+        { sessionId: 'session-b' }
+      ];
+      // The subagent row is listed by the host but hidden by the roster.
+      expect(visibleSessionCount(['session-a', 'child', 'session-b'], rows, [])).assertEqual(2);
+      // Archived ones are gone from the list too.
+      expect(visibleSessionCount(['session-a', 'session-b'], rows, ['session-b'])).assertEqual(1);
+      // An id the roster has not seen yet still counts (no row to judge).
+      expect(visibleSessionCount(['session-a', 'unknown'], rows, [])).assertEqual(2);
+      expect(visibleSessionCount([], rows, [])).assertEqual(0);
     });
   });
 }

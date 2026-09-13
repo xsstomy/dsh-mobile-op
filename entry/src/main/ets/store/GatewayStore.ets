@@ -34,8 +34,8 @@ import {
 } from './UiState';
 import { TodoRow, shouldApplyTodos, todoRowsOf } from '../sync/Todos';
 import {
-  applyEventToRoster, applySessionTitle, applySummaryTitles, displayTitleOf, mergeSessionRows,
-  nextTitleSeq, projectedTitleOf, projectionsSeqOf, rosterIncludesSession, SessionTitle
+  applyEventToRoster, applySessionTitle, applySummaryTitles, displayTitleOf, isTopLevelSession, mergeSessionRows,
+  nextTitleSeq, projectedTitleOf, projectionsSeqOf, rosterIncludesSession, SessionTitle, visibleSessionCount
 } from '../sync/Sessions';
 import { TrajectoryRow, buildTrajectory } from '../projection/Trajectory';
 import { CrumbRow, FileEntryRow, PreviewKind, fileRowsFrom, isTextPreview, previewKindOf, sha256Matches, sortEntries } from '../protocol/Files';
@@ -444,6 +444,12 @@ export class GatewayStore {
       if (id.length === 0 || this.archivedSessionIds.indexOf(id) >= 0) {
         continue;
       }
+      // Subagent sessions are not conversations the user opened, and the host
+      // refuses their history (`session/agent-busy`); they must never reach the
+      // roster. The gateway forwards `origin`/`parentSessionId` for them.
+      if (!isTopLevelSession(session)) {
+        continue;
+      }
       if (!rosterIncludesSession(this.workspaces, this.selectedWorkspaceId, id)) {
         continue;
       }
@@ -595,7 +601,7 @@ export class GatewayStore {
         workspaceId: workspace.workspaceId ?? '',
         title: workspace.title ?? workspace.path ?? '未命名',
         path: workspace.path ?? '',
-        sessionCount: (workspace.sessionIds ?? []).length,
+        sessionCount: visibleSessionCount(workspace.sessionIds ?? [], this.sessions, this.archivedSessionIds),
         active: (workspace.workspaceId ?? '') === this.selectedWorkspaceId
       });
     }
