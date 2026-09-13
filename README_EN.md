@@ -17,6 +17,73 @@ A **native HarmonyOS client** (ArkTS + ArkUI, Stage model) for DeepSeek Harness,
 |---|---|---|
 | ![Home](docs/screenshots/home.jpg) | ![Conversation](docs/screenshots/conversation.jpg) | ![Settings](docs/screenshots/settings.jpg) |
 
+## Features
+
+What is **implemented and usable on a real device today** (`devecocli check lint` is clean; all pure
+logic ships with unit tests).
+
+### Connection & pairing
+
+- Scan or **paste a Base64URL pairing payload** (`dsh-mobile-v1`, `hello.protocol = 3`) with strict
+  validation of version / expiry / address
+- Long-lived device token in **Asset Store Kit**, so "quick reconnect" needs no new scan
+- Dual channel (control + conversation); `hello.capabilities` gates every optional feature, with a
+  fallback instead of an assumption
+- A request timeout or failure **only fails that request** — the connection is never torn down;
+  only transport failures reconnect
+- Several saved endpoints with **manual switching**, plus an optional "auto switch" that prefers the
+  LAN or the public address for the current network
+- Public access through a named Cloudflare tunnel (see "Access outside the LAN")
+
+### Workspaces & sessions
+
+- Workspace picker, session list with search, new session, rename, archive
+- Sessions stay scoped to their workspace, while "ungrouped" ones (created on the desktop by path)
+  are still shown
+- **Subagent sessions never appear in the list**: the host lists them like any other session, so the
+  client filters on `origin = subagent` / `parentSessionId` — they are not conversations the user
+  opened, and the host refuses their history
+- Agent preset (including PTC mode) is shown in the session header
+
+### Conversation
+
+- Paged history plus live event merge (de-duplicated by `seq`, late replies dropped by
+  generation/requestId)
+- Send, queued messages with edit / delete / steer, stop generation
+- Markdown subset rendering, thinking indicator, conversation & trajectory views, session stats
+  (tokens, context pressure, cache hit rate)
+- Human-in-the-loop: approval cards and question cards (including the plan-review card)
+- Image sending and on-demand download (client JSON frame budget: 3.5 MB)
+- `@` file-mention completion (`file-list`)
+- Task (todos) and goal panels
+
+### Plan mode (requires the dsh-plan-toggle plugin)
+
+- The **Plan control appears only when `dsh-plan-toggle` is installed**; without it no control is
+  shown and there is no fallback to the official `/plan`
+- Tapping flips the chip **on the same frame** (a local intent ahead of the round trip) and settles
+  into the confirmed colour once the host projection lands — no more waiting ~1.3 s on a public
+  tunnel for feedback
+- While a switch is unconfirmed the chip **breathes** (opacity cycle + colour ease). A LAN round trip
+  is only 30-50 ms, so the breath has a 900 ms **minimum visible time** — without it the animation
+  would be invisible
+- Review entry point: the `/plan-review` pipeline button, an "in review" progress line, and the
+  result text (archive path / finding count)
+
+### Commands & settings
+
+- `/` command and skill menu (server-driven): session rename/archive, export, model and reasoning
+  effort, permission presets, goal, feedback, skill loading (e.g. `/eval`) and more
+- Model / reasoning-effort / permission-preset pickers; permissions are re-read after a change
+- Theme (system / dark / light), composer shortcut toggles, "`@` files" and slash-menu visibility
+
+### Network robustness (issues fixed)
+
+- A session-scoped **error frame without a `sessionId`** now settles the matching in-flight request
+  by request type: the host's error surfaces in ~30 ms instead of a fake 30 s timeout
+- Reconnect on drop / network change; late replies are dropped by sequence number instead of
+  overwriting newer state
+
 ## Requirements
 
 | Item | Version (tested) |
@@ -197,13 +264,18 @@ entry/src/main/ets/
 
 ## Status
 
-The MVP is verified end-to-end on the emulator (HarmonyOS 6.1.1 / API 24): pairing → dual-channel
-connection → workspace/session lists → history + live conversation → send message → new session →
-credential persistence and automatic reconnect.
+The MVP is verified end-to-end on the emulator (HarmonyOS 6.1.1 / API 24) and on a real device
+(HUAWEI Mate 70 Pro+): pairing → dual-channel connection → workspace/session lists → history + live
+conversation → send message → new session → credential persistence and automatic reconnect.
+
+Added since then (see "Features"): the Plan-mode control and review entry point, tap-time chip flip
+with a breathing light, saved/switching endpoints and a public tunnel, subagent-session filtering,
+and fast error-frame settling.
 
 - Stage-0 protocol findings: `docs/spikes/2026-09-10-stage0-protocol-findings.md`
-- Unit tests: `entry/src/test/` (170 cases: decoding, strict Base64URL, lanes/timeouts/dedupe,
-  history merge, conversation projection, pagination, stats).
+- Unit tests: `entry/src/test/` (pure logic: decoding, strict Base64URL, lanes/timeouts/dedupe,
+  history merge, conversation projection, pagination, stats, plan projection and intent, session
+  filtering, ...).
 
 ## Known constraints
 
